@@ -235,6 +235,7 @@ impl SendBuf {
     /// Updates the max_data limit to the given value.
     pub fn update_max_data(&mut self, max_data: u64) {
         self.max_data = cmp::max(self.max_data, max_data);
+        debug!("update: max_data={}", self.max_data)
     }
 
     /// Updates the last offset the stream was blocked at, if any.

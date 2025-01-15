@@ -1212,5 +1212,7 @@ use boringssl::*;
 
 #[cfg(feature = "openssl")]
 mod openssl_quictls;
+mod rustls;
+
 #[cfg(feature = "openssl")]
 use openssl_quictls::*;

@@ -521,6 +521,7 @@ fn handle_writable(client: &mut Client, stream_id: u64) {
         },
     };
 
+    error!("written: ", written);
     resp.written += written;
 
     if resp.written == resp.body.len() {

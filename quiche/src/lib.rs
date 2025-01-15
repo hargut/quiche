@@ -416,7 +416,7 @@ use std::str::FromStr;
 
 use std::collections::HashSet;
 use std::collections::VecDeque;
-
+use std::task::Waker;
 use smallvec::SmallVec;
 
 /// The current QUIC wire version.
@@ -4422,6 +4422,9 @@ impl Connection {
                     self.streams.remove_flushable(&priority_key);
                     self.streams.insert_flushable(&priority_key);
                 }
+                if let Some(waker) = self.streams.writeable_interest.remove(&stream_id) {
+                    waker.wake()
+                }
 
                 #[cfg(feature = "fuzzing")]
                 // Coalesce STREAM frames when fuzzing.
@@ -5162,9 +5165,11 @@ impl Connection {
     #[inline]
     pub fn stream_capacity(&self, stream_id: u64) -> Result<usize> {
         if let Some(stream) = self.streams.get(stream_id) {
+            debug!("tx_cap={}, send_cap={}", self.tx_cap, stream.send.cap()?);
             let cap = cmp::min(self.tx_cap, stream.send.cap()?);
             return Ok(cap);
         };
+
 
         Err(Error::InvalidStreamState(stream_id))
     }
@@ -5315,6 +5320,45 @@ impl Connection {
 
         Ok(false)
     }
+
+    pub fn stream_readable_interest(&mut self, stream_id: u64, waker: Waker) -> Result<Option<Waker>> {
+        let _stream = match self.streams.get_mut(stream_id) {
+            Some(v) => v,
+
+            None => return Err(Error::InvalidStreamState(stream_id)),
+        };
+
+        Ok(self.streams.readable_interest.insert(stream_id, waker))
+    }
+
+    pub fn stream_writable_interest(&mut self, stream_id: u64, waker: Waker) -> Result<Option<Waker>> {
+        let _stream = match self.streams.get_mut(stream_id) {
+            Some(v) => v,
+
+            None => return Err(Error::InvalidStreamState(stream_id)),
+        };
+
+        Ok(self.streams.writeable_interest.insert(stream_id, waker))
+    }
+
+    pub fn stream_opened_uni_interest(&mut self, waker: Waker) {
+        if let Some(waker) = &self.streams.peer_opened_stream_uni_interest {
+            if waker.will_wake(waker) {
+                return
+            }
+        }
+        self.streams.peer_opened_stream_uni_interest = Some(waker);
+    }
+
+    pub fn stream_opened_bidi_interest(&mut self, waker: Waker) {
+        if let Some(waker) = &self.streams.peer_opened_stream_bidi_interest {
+            if waker.will_wake(waker) {
+                return
+            }
+        }
+        self.streams.peer_opened_stream_bidi_interest = Some(waker);
+    }
+
 
     /// Returns true if all the data has been read from the specified stream.
     ///
@@ -7181,6 +7225,11 @@ impl Connection {
 
             frame::Frame::MaxData { max } => {
                 self.max_tx_data = cmp::max(self.max_tx_data, max);
+                self.streams.writeable_interest.retain(|k, v| {
+                    error!("received MaxData frame writeable_interest notified {}", k);
+                    v.wake_by_ref();
+                    false
+                });
             },
 
             frame::Frame::MaxStreamData { stream_id, max } => {
@@ -17381,7 +17430,7 @@ pub use crate::path::PathStats;
 pub use crate::path::SocketAddrIter;
 
 pub use crate::recovery::congestion::CongestionControlAlgorithm;
-
+use crate::stream::Stream;
 pub use crate::stream::StreamIter;
 
 mod cid;

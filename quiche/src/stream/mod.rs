@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::collections::hash_map;
 use std::collections::HashMap;
 use std::collections::HashSet;
-
+use std::task::Waker;
 use intrusive_collections::intrusive_adapter;
 use intrusive_collections::KeyAdapter;
 use intrusive_collections::RBTree;
@@ -104,9 +104,11 @@ pub struct StreamMap {
 
     /// The total number of bidirectional streams opened by the peer.
     peer_opened_streams_bidi: u64,
+    pub peer_opened_stream_bidi_interest: Option<Waker>,
 
     /// The total number of unidirectional streams opened by the peer.
     peer_opened_streams_uni: u64,
+    pub peer_opened_stream_uni_interest: Option<Waker>,
 
     /// Local maximum bidirectional stream count limit.
     local_max_streams_bidi: u64,
@@ -131,12 +133,14 @@ pub struct StreamMap {
     /// to read. This is used to generate a `StreamIter` of streams without
     /// having to iterate over the full list of streams.
     pub readable: RBTree<StreamReadablePriorityAdapter>,
+    pub readable_interest: StreamIdHashMap<Waker>,
 
     /// Set of stream IDs corresponding to streams that have enough flow control
     /// capacity to be written to, and is not finished. This is used to generate
     /// a `StreamIter` of streams without having to iterate over the full list
     /// of streams.
     pub writable: RBTree<StreamWritablePriorityAdapter>,
+    pub writeable_interest: StreamIdHashMap<Waker>,
 
     /// Set of stream IDs corresponding to streams that are almost out of flow
     /// control credit and need to send MAX_STREAM_DATA. This is used to
@@ -282,6 +286,9 @@ impl StreamMap {
                         }
 
                         self.peer_opened_streams_bidi = n;
+                        if let Some(waker) = self.peer_opened_stream_bidi_interest.take() {
+                            waker.wake()
+                        }
                     },
 
                     (false, false) => {
@@ -295,6 +302,9 @@ impl StreamMap {
                         }
 
                         self.peer_opened_streams_uni = n;
+                        if let Some(waker) = self.peer_opened_stream_uni_interest.take() {
+                            waker.wake()
+                        }
                     },
                 };
 
@@ -330,6 +340,9 @@ impl StreamMap {
     pub fn insert_readable(&mut self, priority_key: &Arc<StreamPriorityKey>) {
         if !priority_key.readable.is_linked() {
             self.readable.insert(Arc::clone(priority_key));
+            if let Some(waker) = self.readable_interest.remove(&priority_key.id) {
+                waker.wake()
+            }
         }
     }
 
@@ -702,6 +715,10 @@ impl Stream {
     /// Returns true if the stream has enough flow control capacity to be
     /// written to, and is not finished.
     pub fn is_writable(&self) -> bool {
+        debug!("is_writable: {}, {}, {}, {}", self.send.off_back(), self.send_lowat as u64, self.send.max_off(),
+            (self.send.off_back() + self.send_lowat as u64) <
+                self.send.max_off()
+        );
         !self.send.is_shutdown() &&
             !self.send.is_fin() &&
             (self.send.off_back() + self.send_lowat as u64) <

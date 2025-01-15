@@ -306,7 +306,7 @@ fn main() {
 
                     // Do stateless retry if the client didn't send a token.
                     if token.is_empty() {
-                        warn!("Doing stateless retry");
+                        debug!("Doing stateless retry");
 
                         let scid = quiche::ConnectionId::from_ref(&scid);
                         let new_token = mint_token(&hdr, &from);
@@ -558,6 +558,7 @@ fn main() {
             let mut total_write = 0;
             let mut dst_info = None;
 
+            trace!("total_write={}, max_send_burst={}", total_write, max_send_burst);
             while total_write < max_send_burst {
                 let (write, send_info) = match client
                     .conn
@@ -571,20 +572,22 @@ fn main() {
                     },
 
                     Err(e) => {
-                        error!("{} send failed: {:?}", client.conn.trace_id(), e);
-
                         client.conn.close(false, 0x1, b"fail").ok();
+                        error!("{} send failed: {:?}", client.conn.trace_id(), e);
                         break;
                     },
                 };
 
+                trace!("total_write={}, write={}, total_write={}", total_write, write, total_write + write);
                 total_write += write;
+
 
                 // Use the first packet time to send, not the last.
                 let _ = dst_info.get_or_insert(send_info);
 
                 if write < client.max_datagram_size {
                     continue_write = true;
+                    trace!("write={} client.max_datagram_size={:?}", write, client.max_datagram_size);
                     break;
                 }
             }
@@ -593,6 +596,7 @@ fn main() {
                 continue;
             }
 
+            trace!("sending with: total_write={}, max_datagram_size={}", total_write, client.max_datagram_size);
             if let Err(e) = send_to(
                 &socket,
                 &out[..total_write],
@@ -623,7 +627,7 @@ fn main() {
             trace!("Collecting garbage");
 
             if c.conn.is_closed() {
-                info!(
+                debug!(
                     "{} connection collected {:?} {:?}",
                     c.conn.trace_id(),
                     c.conn.stats(),

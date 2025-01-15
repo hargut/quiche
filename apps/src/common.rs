@@ -628,16 +628,18 @@ impl HttpConn for Http09Conn {
 
                     path = autoindex(path, index);
 
-                    info!(
+                    debug!(
                         "{} got GET request for {:?} on stream {}",
                         conn.trace_id(),
                         path,
                         s
                     );
 
+                    let body = b"no body!".to_vec();
+                    /*
                     let body = std::fs::read(path.as_path())
                         .unwrap_or_else(|_| b"Not Found!\r\n".to_vec());
-
+                    */
                     info!(
                         "{} sending response of size {} on stream {}",
                         conn.trace_id(),
@@ -1099,12 +1101,16 @@ impl Http3Conn {
                         file_path.push(v)
                     }
                 }
+                (200, b"no body!".to_vec())
 
+
+                /*
                 match std::fs::read(file_path.as_path()) {
                     Ok(data) => (200, data),
 
                     Err(_) => (404, b"Not Found!".to_vec()),
                 }
+                 */
             },
 
             _ => (405, Vec::new()),
@@ -1410,7 +1416,7 @@ impl HttpConn for Http3Conn {
         loop {
             match self.h3_conn.poll(conn) {
                 Ok((stream_id, quiche::h3::Event::Headers { list, .. })) => {
-                    info!(
+                    debug!(
                         "{} got request {:?} on stream id {}",
                         conn.trace_id(),
                         hdrs_to_strings(&list),
@@ -1471,7 +1477,7 @@ impl HttpConn for Http3Conn {
                     #[cfg(not(feature = "sfv"))]
                     let priority = quiche::h3::Priority::default();
 
-                    info!(
+                    debug!(
                         "{} prioritizing response on stream {} as {:?}",
                         conn.trace_id(),
                         stream_id,
