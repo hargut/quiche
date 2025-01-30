@@ -2418,6 +2418,7 @@ impl Connection {
 
         let mut hdr = Header::from_bytes(&mut b, self.source_id().len())
             .map_err(|e| {
+                trace!("dropped invalid packet {} Header::from_bytes {:?}", e, b);
                 drop_pkt_on_err(
                     e,
                     self.recv_count,
@@ -2604,6 +2605,7 @@ impl Connection {
             b.cap()
         } else {
             b.get_varint().map_err(|e| {
+                trace!("dropped invalid packet {} header {:?}", e, hdr);
                 drop_pkt_on_err(
                     e.into(),
                     self.recv_count,
@@ -2616,6 +2618,7 @@ impl Connection {
         // Make sure the buffer is same or larger than an explicit
         // payload length.
         if payload_len > b.cap() {
+            trace!("dropped invalid packet InvalidPacket header {:?}", hdr);
             return Err(drop_pkt_on_err(
                 Error::InvalidPacket,
                 self.recv_count,
@@ -2679,7 +2682,7 @@ impl Connection {
                     self.is_server,
                     &self.trace_id,
                 );
-
+                trace!("dropped invalid packet CryptoFail header {:?}", hdr);
                 return Err(e);
             },
         };
@@ -2687,6 +2690,7 @@ impl Connection {
         let aead_tag_len = aead.alg().tag_len();
 
         packet::decrypt_hdr(&mut b, &mut hdr, aead).map_err(|e| {
+            trace!("dropped invalid packet {} header {:?}", e, hdr);
             drop_pkt_on_err(e, self.recv_count, self.is_server, &self.trace_id)
         })?;
 
@@ -2756,6 +2760,7 @@ impl Connection {
             aead,
         )
         .map_err(|e| {
+            trace!("dropped invalid packet {} header {:?}", e, hdr);
             drop_pkt_on_err(e, self.recv_count, self.is_server, &self.trace_id)
         })?;
 
@@ -7910,7 +7915,7 @@ fn drop_pkt_on_err(
         return e;
     }
 
-    trace!("{} dropped invalid packet", trace_id);
+    trace!("{} dropped invalid packet {:?}", trace_id, e);
 
     // Ignore other invalid packets that haven't been authenticated to prevent
     // man-in-the-middle and man-on-the-side attacks.
