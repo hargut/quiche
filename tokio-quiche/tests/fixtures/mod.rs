@@ -73,14 +73,10 @@ pub mod h3i_fixtures;
 use h3i_fixtures::stream_body;
 
 pub const TEST_CERT_FILE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/",
-    "../quiche/examples/cert.crt"
+    "/home/hargut/Sources/github.com/pingora/pingora-proxy/tests/utils/conf/keys/server_rustls.crt"
 );
 pub const TEST_KEY_FILE: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/",
-    "../quiche/examples/cert.key"
+    "/home/hargut/Sources/github.com/pingora/pingora-proxy/tests/utils/conf/keys/key.pem"
 );
 
 pub struct TestConnectionHook {
@@ -228,7 +224,7 @@ where
     F: Fn(ServerH3Connection) -> Fut + Send + Clone + 'static,
     Fut: Future<Output = ()> + Send,
 {
-    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let socket = std::net::UdpSocket::bind("0.0.0.0:4455").unwrap();
     let url = format!("http://127.0.0.1:{}", socket.local_addr().unwrap().port());
 
     let tls_cert_settings = TlsCertificatePaths {

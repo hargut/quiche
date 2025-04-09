@@ -1,4 +1,4 @@
-use super::*;
+use super::boringssl_openssl_quictls_common::*;
 
 use libc::c_long;
 

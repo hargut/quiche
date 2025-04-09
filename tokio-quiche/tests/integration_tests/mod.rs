@@ -77,6 +77,7 @@ async fn echo() {
 #[tokio::test]
 async fn e2e() {
     let (url, hook) = start_server();
+    tokio::time::sleep(Duration::from_secs(1000)).await;
     let url = format!("{url}/1");
 
     let res = request(url, 1).await.unwrap();
