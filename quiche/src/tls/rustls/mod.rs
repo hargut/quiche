@@ -1,20 +1,31 @@
+use crate::crypto;
+use crate::tls::ExData;
+use crate::Error;
+use crate::Result;
 use std::fs::DirEntry;
 use std::sync::Arc;
-use crate::{crypto, Error};
-use crate::tls::ExData;
-use crate::Result;
 
-use rustls::quic::Version;
-use rustls::{ClientConfig, KeyLogFile, RootCertStore, ServerConfig};
+use crate::crypto::Level;
 use rustls::client::WebPkiServerVerifier;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::pki_types::pem::PemObject;
-use rustls::server::{WebPkiClientVerifier};
+use rustls::pki_types::CertificateDer;
+use rustls::pki_types::PrivateKeyDer;
+use rustls::pki_types::ServerName;
+use rustls::quic::ClientConnection;
+use rustls::quic::ServerConnection;
+use rustls::quic::Version;
+use rustls::server::WebPkiClientVerifier;
 use rustls::version::TLS13;
+use rustls::CipherSuite;
+use rustls::ClientConfig;
+use rustls::HandshakeKind;
+use rustls::KeyLogFile;
+use rustls::RootCertStore;
+use rustls::ServerConfig;
 
 pub struct Context {
-    client_config: Option<ClientConfig>,
-    server_config: Option<ServerConfig>,
+    client_config: Option<Arc<ClientConfig>>,
+    server_config: Option<Arc<ServerConfig>>,
     // required to build the above configs
     // are consumed during configs building
     private_key_client: Option<PrivateKeyDer<'static>>,
@@ -26,20 +37,15 @@ pub struct Context {
     enable_keylog: bool,
     enable_early_data: bool,
     quic_version: Version,
-    // currently unused
-    ticket_key: Vec<u8>,
 }
 
-/*
-fn early_data_enabled(&self) -> bool {
-  match self {
-      Config::Server(cfg) => cfg.max_early_data_size > 0,
-      Config::Client(cfg) => cfg.enable_early_data
-  }
-}
-*/
+// fn early_data_enabled(&self) -> bool {
+// match self {
+// Config::Server(cfg) => cfg.max_early_data_size > 0,
+// Config::Client(cfg) => cfg.enable_early_data
+// }
+// }
 
-#[allow(unused_variables)]
 // mod implementation
 impl Context {
     pub fn new() -> Result<Self> {
@@ -54,16 +60,16 @@ impl Context {
             enable_keylog: false,
             enable_early_data: false,
             quic_version: Default::default(),
-            ticket_key: vec![],
             alpns: vec![],
         })
     }
 
     pub fn new_handshake(&mut self) -> Result<Handshake> {
         let verify_store = if self.enable_verify_ca_certificates {
-            let Some(verify_store) = self.verify_ca_certificates_store.take() else {
+            let Some(verify_store) = self.verify_ca_certificates_store.take()
+            else {
                 // enabled but no store available
-                return Err(Error::TlsFail)
+                return Err(Error::TlsFail);
             };
             Some(Arc::new(verify_store))
         } else {
@@ -73,21 +79,26 @@ impl Context {
         if self.server_config.is_none() {
             let builder = ServerConfig::builder_with_protocol_versions(&[&TLS13]);
             let builder = if let Some(verify_store) = verify_store.clone() {
-                let client_vierifier = WebPkiClientVerifier::builder(verify_store)
-                    .build()
-                    .map_err(|_| Error::TlsFail)?;
+                let client_vierifier =
+                    WebPkiClientVerifier::builder(verify_store)
+                        .build()
+                        .map_err(|_| Error::TlsFail)?;
 
                 builder.with_client_cert_verifier(client_vierifier)
             } else {
                 builder.with_no_client_auth()
             };
 
-            let mut config =if let (Some(certs), Some(key)) = (self.ca_certificates.clone(), self.private_key_server.take()) {
-                builder.with_single_cert(certs, key).map_err(|_| Error::TlsFail)?
+            let mut config = if let (Some(certs), Some(key)) =
+                (self.ca_certificates.clone(), self.private_key_server.take())
+            {
+                builder
+                    .with_single_cert(certs, key)
+                    .map_err(|_| Error::TlsFail)?
             } else {
                 // server without ca & key config
                 // not supported in QUIC, TLS is mandatory
-                return Err(Error::TlsFail)
+                return Err(Error::TlsFail);
             };
 
             if self.enable_keylog {
@@ -96,8 +107,8 @@ impl Context {
             if self.enable_early_data {
                 // matching boringssl default
                 //
-                // kMaxEarlyDataAccepted is the advertised number of plaintext bytes of early
-                // data that will be accepted.
+                // kMaxEarlyDataAccepted is the advertised number of plaintext
+                // bytes of early data that will be accepted.
                 config.max_early_data_size = 14336;
             }
 
@@ -105,7 +116,7 @@ impl Context {
                 config.alpn_protocols = self.alpns.clone();
             }
 
-            self.server_config = Some(config);
+            self.server_config = Some(Arc::new(config));
         };
 
         if self.client_config.is_none() {
@@ -119,16 +130,22 @@ impl Context {
                 builder.with_webpki_verifier(server_verifier)
             } else {
                 // default to env variables or system store
-                // this behaviour differs as no-verification on client side is not intended on rustls
-                let certificates_result = rustls_native_certs::load_native_certs();
+                // this behaviour differs as no-verification on client side is not
+                // intended on rustls
+                let certificates_result =
+                    rustls_native_certs::load_native_certs();
                 let mut store = RootCertStore::empty();
                 store.add_parsable_certificates(certificates_result.certs);
 
                 builder.with_root_certificates(store)
             };
 
-            let mut config = if let (Some(certs), Some(key)) = (self.ca_certificates.take(), self.private_key_client.take()) {
-                builder.with_client_auth_cert(certs, key).map_err(|_| Error::TlsFail)?
+            let mut config = if let (Some(certs), Some(key)) =
+                (self.ca_certificates.take(), self.private_key_client.take())
+            {
+                builder
+                    .with_client_auth_cert(certs, key)
+                    .map_err(|_| Error::TlsFail)?
             } else {
                 builder.with_no_client_auth()
             };
@@ -144,20 +161,23 @@ impl Context {
                 config.alpn_protocols = self.alpns.clone();
             }
 
-            self.client_config = Some(config)
+            self.client_config = Some(Arc::new(config))
         }
 
         Ok(Handshake {
             client_config: self.client_config.clone().ok_or(Error::TlsFail)?,
             server_config: self.server_config.clone().ok_or(Error::TlsFail)?,
             hostname: None,
-            quic_version: self.quic_version.clone()
+            quic_version: self.quic_version.clone(),
+            client_conn: None,
+            server_conn: None,
+            is_server: false,
+            quic_transport_params: vec![],
+            provided_data_outstanding: false,
         })
     }
 
-    pub fn load_verify_locations_from_file(
-        &mut self, file: &str,
-    ) -> Result<()> {
+    pub fn load_verify_locations_from_file(&mut self, file: &str) -> Result<()> {
         let verify_certificates = Self::load_ca_certificates_from_file(file)?;
         self.extend_verify_ca_certificates(verify_certificates);
         Ok(())
@@ -166,11 +186,14 @@ impl Context {
     pub fn load_verify_locations_from_directory(
         &mut self, path: &str,
     ) -> Result<()> {
-        let files : Result<Vec<DirEntry>> = std::fs::read_dir(path).map_err(|e| Error::TlsFail)?
-            .into_iter().map(|rd| rd.map_err(|e| Error::TlsFail))
+        let files: Result<Vec<DirEntry>> = std::fs::read_dir(path)
+            .map_err(|_| Error::TlsFail)?
+            .into_iter()
+            .map(|rd| rd.map_err(|_| Error::TlsFail))
             .collect();
 
-        let verify_certificates : Vec<CertificateDer> = files?.into_iter()
+        let verify_certificates: Vec<CertificateDer> = files?
+            .into_iter()
             .flat_map(|f| Self::load_ca_certificates_from_file(f.path()))
             .flatten()
             .collect();
@@ -179,22 +202,25 @@ impl Context {
         Ok(())
     }
 
-    pub fn use_certificate_chain_file(
-        &mut self, file: &str,
-    ) -> Result<()> {
+    pub fn use_certificate_chain_file(&mut self, file: &str) -> Result<()> {
         self.ca_certificates = Some(Self::load_ca_certificates_from_file(file)?);
         Ok(())
     }
 
-    fn load_ca_certificates_from_file(file: impl AsRef<std::path::Path>) -> Result<Vec<CertificateDer<'static>>> {
-        let certificates: Result<Vec<CertificateDer>> = CertificateDer::pem_file_iter(file)
-            .map_err(|e| Error::TlsFail)?
-            .map(|r| r.map_err(|_| Error::TlsFail))
-            .collect();
+    fn load_ca_certificates_from_file(
+        file: impl AsRef<std::path::Path>,
+    ) -> Result<Vec<CertificateDer<'static>>> {
+        let certificates: Result<Vec<CertificateDer>> =
+            CertificateDer::pem_file_iter(file)
+                .map_err(|_| Error::TlsFail)?
+                .map(|r| r.map_err(|_| Error::TlsFail))
+                .collect();
         Ok(certificates?)
     }
 
-    fn extend_verify_ca_certificates(&mut self, verify_certificates: Vec<CertificateDer<'static>>) {
+    fn extend_verify_ca_certificates(
+        &mut self, verify_certificates: Vec<CertificateDer<'static>>,
+    ) {
         if let Some(cert_store) = &mut self.verify_ca_certificates_store {
             cert_store.add_parsable_certificates(verify_certificates);
         } else {
@@ -205,10 +231,10 @@ impl Context {
     }
 
     pub fn use_privkey_file(&mut self, file: &str) -> Result<()> {
-        let private_key_client = PrivateKeyDer::from_pem_file(file)
-            .map_err(|e| Error::TlsFail)?;
-        let private_key_server = PrivateKeyDer::from_pem_file(file)
-            .map_err(|e| Error::TlsFail)?;
+        let private_key_client =
+            PrivateKeyDer::from_pem_file(file).map_err(|_| Error::TlsFail)?;
+        let private_key_server =
+            PrivateKeyDer::from_pem_file(file).map_err(|_| Error::TlsFail)?;
 
         // NOTE: storing it twice as PrivateKeyDer cannot be copied/cloned
         // ClientConfig & ServerConfig are built in new_handshake()
@@ -227,18 +253,18 @@ impl Context {
     }
 
     pub fn set_alpn(&mut self, v: &[&[u8]]) -> Result<()> {
-        let alpns : Vec<Vec<u8>> = v.iter().map(|a| a.to_vec()).collect();
+        let alpns: Vec<Vec<u8>> = v.iter().map(|a| a.to_vec()).collect();
         self.alpns = alpns;
         Ok(())
     }
 
-    pub fn set_ticket_key(&mut self, key: &[u8]) -> Result<()> {
-        self.ticket_key = key.to_vec();
-        Ok(())
+    // TODO: remove method
+    pub fn set_ticket_key(&mut self, _key: &[u8]) -> Result<()> {
+        // not supported in rustls
+        Err(Error::TlsFail)
     }
 }
 
-#[allow(unused_variables)]
 // specific implementation
 impl Context {
     pub fn set_early_data_enabled(&mut self, enabled: bool) {
@@ -247,61 +273,145 @@ impl Context {
 }
 
 pub struct Handshake {
-    client_config: ClientConfig,
-    server_config: ServerConfig,
+    client_config: Arc<ClientConfig>,
+    server_config: Arc<ServerConfig>,
     hostname: Option<ServerName<'static>>,
     quic_version: Version,
+
+    is_server: bool,
+    quic_transport_params: Vec<u8>,
+
+    client_conn: Option<ClientConnection>,
+    server_conn: Option<ServerConnection>,
+
+    provided_data_outstanding: bool,
 }
 
-#[allow(unused_variables)]
 // mod implementation
 impl Handshake {
     pub fn init(&mut self, is_server: bool) -> Result<()> {
-        if is_server {
-
-        }
+        self.is_server = is_server;
         Ok(())
     }
 
-    pub fn use_legacy_codepoint(&mut self, use_legacy: bool) {
-        todo!()
+    pub fn use_legacy_codepoint(&mut self, _use_legacy: bool) {
+        () // noop for rustls
     }
 
     pub fn set_host_name(&mut self, name: &str) -> Result<()> {
         let name = ServerName::try_from(name)
-            .expect("invalid DNS name")
+            .map_err(|_| Error::TlsFail)?
             .to_owned();
 
+        self.hostname = Some(name);
         Ok(())
     }
 
     pub fn set_quic_transport_params(&mut self, buf: &[u8]) -> Result<()> {
-        todo!()
+        self.quic_transport_params = buf.to_vec();
+        Ok(())
     }
 
     pub fn quic_transport_params(&self) -> &[u8] {
-        todo!()
+        if let Some(client_conn) = &self.client_conn {
+            if let Some(params) = client_conn.quic_transport_parameters() {
+                return params;
+            }
+        }
+        if let Some(server_conn) = &self.server_conn {
+            if let Some(params) = server_conn.quic_transport_parameters() {
+                return params;
+            }
+        }
+
+        self.quic_transport_params.as_slice()
     }
 
     pub fn alpn_protocol(&self) -> &[u8] {
-        todo!()
+        if let Some(client_conn) = &self.client_conn {
+            if let Some(alpns) = client_conn.alpn_protocol() {
+                return alpns;
+            }
+        }
+        if let Some(server_conn) = &self.server_conn {
+            if let Some(alpns) = server_conn.alpn_protocol() {
+                return alpns;
+            }
+        }
+
+        &[]
     }
 
     pub fn server_name(&self) -> Option<&str> {
-        todo!()
+        if let Some(server_conn) = &self.server_conn {
+            server_conn.server_name()
+        } else {
+            None
+        }
     }
 
     pub fn provide_data(
         &mut self, level: crypto::Level, buf: &[u8],
     ) -> Result<()> {
-        todo!()
+        // TODO: right before do_handshake in
+        // process_frame -> Frame::Crypto -> provide_data -> do_handshake
+        println!("provide_data level: {:?}, buf: {:?}", level, buf);
+        self.provided_data_outstanding = true;
+        // check level
+        // https://github.com/google/boringssl/blob/99bd1df99b2ada05877f36f85ff2f7f37e176fd6/ssl/ssl_lib.cc#L695
+
+        // FIXME: unify to quic::Connection for ease of use
+
+        match level {
+            Level::Initial => {},
+            Level::ZeroRTT => {},
+            Level::Handshake => {},
+            Level::OneRTT => {},
+        }
+
+        // tls_append_handshake_data(ssl, Span(data, len));
+        Ok(())
     }
 
     pub fn do_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
-        todo!()
+        if self.is_server {
+            let server_conn = ServerConnection::new(
+                self.server_config.clone(),
+                self.quic_version.clone(),
+                self.quic_transport_params.clone(),
+            )
+            .map_err(|_| Error::TlsFail)?;
+            self.server_conn = Some(server_conn)
+        } else {
+            let Some(hostname) = &self.hostname else {
+                return Err(Error::TlsFail);
+            };
+            let client_conn = ClientConnection::new(
+                self.client_config.clone(),
+                self.quic_version.clone(),
+                hostname.to_owned(),
+                self.quic_transport_params.clone(),
+            )
+            .map_err(|_| Error::TlsFail)?;
+            self.client_conn = Some(client_conn)
+        }
+
+        Ok(())
     }
 
     pub fn process_post_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
+        // If SSL_provide_quic_data hasn't been called since we last called
+        // SSL_process_quic_post_handshake, then there's nothing to do.
+        if !self.provided_data_outstanding {
+            return Ok(());
+        }
+        self.provided_data_outstanding = false;
+
+        // https://github.com/google/boringssl/blob/99bd1df99b2ada05877f36f85ff2f7f37e176fd6/ssl/ssl_lib.cc#L767
+        // read additional messages
+        // check alerts
+        // check renegotiate
+        // check transport errors
         todo!()
     }
 
@@ -310,15 +420,51 @@ impl Handshake {
     }
 
     pub fn cipher(&self) -> Option<crypto::Algorithm> {
-        todo!()
+        let suite = if let Some(server_conn) = &self.server_conn {
+            server_conn.negotiated_cipher_suite()
+        } else if let Some(client_conn) = &self.client_conn {
+            client_conn.negotiated_cipher_suite()
+        } else {
+            None
+        };
+
+        let Some(suite) = suite else { return None };
+
+        match suite.suite() {
+            CipherSuite::TLS13_AES_128_GCM_SHA256 =>
+                Some(crypto::Algorithm::AES128_GCM),
+            CipherSuite::TLS13_AES_256_GCM_SHA384 =>
+                Some(crypto::Algorithm::AES256_GCM),
+            CipherSuite::TLS13_CHACHA20_POLY1305_SHA256 =>
+                Some(crypto::Algorithm::ChaCha20_Poly1305),
+            _ => None,
+        }
     }
 
     pub fn is_completed(&self) -> bool {
-        todo!()
+        if let Some(client_conn) = &self.client_conn {
+            return !client_conn.is_handshaking();
+        }
+        if let Some(server_conn) = &self.server_conn {
+            return !server_conn.is_handshaking();
+        }
+
+        false
     }
 
     pub fn is_resumed(&self) -> bool {
-        todo!()
+        if let Some(client_conn) = &self.client_conn {
+            if let Some(kind) = client_conn.handshake_kind() {
+                return matches!(kind, HandshakeKind::Resumed);
+            }
+        }
+        if let Some(server_conn) = &self.server_conn {
+            if let Some(kind) = server_conn.handshake_kind() {
+                return matches!(kind, HandshakeKind::Resumed);
+            }
+        }
+
+        false
     }
 
     pub fn clear(&mut self) -> Result<()> {
