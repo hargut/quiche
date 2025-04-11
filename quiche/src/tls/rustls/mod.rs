@@ -12,6 +12,7 @@ use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::pki_types::ServerName;
 use rustls::quic::ClientConnection;
+use rustls::quic::Connection;
 use rustls::quic::ServerConnection;
 use rustls::quic::Version;
 use rustls::server::WebPkiClientVerifier;
@@ -169,8 +170,7 @@ impl Context {
             server_config: self.server_config.clone().ok_or(Error::TlsFail)?,
             hostname: None,
             quic_version: self.quic_version.clone(),
-            client_conn: None,
-            server_conn: None,
+            connection: None,
             is_server: false,
             quic_transport_params: vec![],
             provided_data_outstanding: false,
@@ -281,8 +281,7 @@ pub struct Handshake {
     is_server: bool,
     quic_transport_params: Vec<u8>,
 
-    client_conn: Option<ClientConnection>,
-    server_conn: Option<ServerConnection>,
+    connection: Option<Connection>,
 
     provided_data_outstanding: bool,
 }
@@ -313,13 +312,8 @@ impl Handshake {
     }
 
     pub fn quic_transport_params(&self) -> &[u8] {
-        if let Some(client_conn) = &self.client_conn {
-            if let Some(params) = client_conn.quic_transport_parameters() {
-                return params;
-            }
-        }
-        if let Some(server_conn) = &self.server_conn {
-            if let Some(params) = server_conn.quic_transport_parameters() {
+        if let Some(conn) = &self.connection {
+            if let Some(params) = conn.quic_transport_parameters() {
                 return params;
             }
         }
@@ -328,13 +322,8 @@ impl Handshake {
     }
 
     pub fn alpn_protocol(&self) -> &[u8] {
-        if let Some(client_conn) = &self.client_conn {
-            if let Some(alpns) = client_conn.alpn_protocol() {
-                return alpns;
-            }
-        }
-        if let Some(server_conn) = &self.server_conn {
-            if let Some(alpns) = server_conn.alpn_protocol() {
+        if let Some(conn) = &self.connection {
+            if let Some(alpns) = conn.alpn_protocol() {
                 return alpns;
             }
         }
@@ -343,11 +332,10 @@ impl Handshake {
     }
 
     pub fn server_name(&self) -> Option<&str> {
-        if let Some(server_conn) = &self.server_conn {
-            server_conn.server_name()
-        } else {
-            None
-        }
+        self.connection.as_ref().and_then(|c| match c {
+            Connection::Client(_) => None,
+            Connection::Server(sc) => sc.server_name(),
+        })
     }
 
     pub fn provide_data(
@@ -359,8 +347,6 @@ impl Handshake {
         self.provided_data_outstanding = true;
         // check level
         // https://github.com/google/boringssl/blob/99bd1df99b2ada05877f36f85ff2f7f37e176fd6/ssl/ssl_lib.cc#L695
-
-        // FIXME: unify to quic::Connection for ease of use
 
         match level {
             Level::Initial => {},
@@ -381,7 +367,7 @@ impl Handshake {
                 self.quic_transport_params.clone(),
             )
             .map_err(|_| Error::TlsFail)?;
-            self.server_conn = Some(server_conn)
+            self.connection = Some(server_conn.into())
         } else {
             let Some(hostname) = &self.hostname else {
                 return Err(Error::TlsFail);
@@ -393,7 +379,7 @@ impl Handshake {
                 self.quic_transport_params.clone(),
             )
             .map_err(|_| Error::TlsFail)?;
-            self.client_conn = Some(client_conn)
+            self.connection = Some(client_conn.into())
         }
 
         Ok(())
@@ -420,14 +406,10 @@ impl Handshake {
     }
 
     pub fn cipher(&self) -> Option<crypto::Algorithm> {
-        let suite = if let Some(server_conn) = &self.server_conn {
-            server_conn.negotiated_cipher_suite()
-        } else if let Some(client_conn) = &self.client_conn {
-            client_conn.negotiated_cipher_suite()
-        } else {
-            None
-        };
-
+        let suite = self
+            .connection
+            .as_ref()
+            .and_then(|c| c.negotiated_cipher_suite());
         let Some(suite) = suite else { return None };
 
         match suite.suite() {
@@ -442,24 +424,16 @@ impl Handshake {
     }
 
     pub fn is_completed(&self) -> bool {
-        if let Some(client_conn) = &self.client_conn {
-            return !client_conn.is_handshaking();
-        }
-        if let Some(server_conn) = &self.server_conn {
-            return !server_conn.is_handshaking();
+        if let Some(conn) = &self.connection {
+            return !conn.is_handshaking();
         }
 
         false
     }
 
     pub fn is_resumed(&self) -> bool {
-        if let Some(client_conn) = &self.client_conn {
-            if let Some(kind) = client_conn.handshake_kind() {
-                return matches!(kind, HandshakeKind::Resumed);
-            }
-        }
-        if let Some(server_conn) = &self.server_conn {
-            if let Some(kind) = server_conn.handshake_kind() {
+        if let Some(conn) = &self.connection {
+            if let Some(kind) = conn.handshake_kind() {
                 return matches!(kind, HandshakeKind::Resumed);
             }
         }
