@@ -10,6 +10,9 @@ pub use rustls::*;
 
 use crate::packet;
 
+// All the AEAD algorithms we support use 96-bit nonces.
+pub const MAX_NONCE_LEN: usize = 12;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {

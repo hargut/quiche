@@ -31,9 +31,7 @@ use crate::Error;
 use crate::Result;
 
 use crate::crypto::Algorithm;
-
-// All the AEAD algorithms we support use 96-bit nonces.
-pub const MAX_NONCE_LEN: usize = 12;
+use crate::crypto::MAX_NONCE_LEN;
 
 // Length of header protection mask.
 pub const HP_MASK_LEN: usize = 5;
