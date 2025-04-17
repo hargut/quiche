@@ -15,6 +15,7 @@ use rustls::quic::Tag;
 use rustls::quic::Version;
 use rustls::CipherSuite;
 use rustls::Side;
+use std::sync::Arc;
 
 // TODO:
 //#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
@@ -173,21 +174,7 @@ impl Seal {
 pub fn derive_initial_key_material(
     cid: &[u8], version: u32, is_server: bool, did_reset: bool,
 ) -> Result<(Open, Seal)> {
-    let mut provider = CryptoProvider::get_default();
-    if provider.is_none() {
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .map_err(|e| {
-                error!("failed to initialize crypto provider");
-                Error::CryptoFail
-            })?;
-        provider = CryptoProvider::get_default();
-    };
-
-    let provider = provider.ok_or_else(|| {
-        error!("crypto provider not installed");
-        Error::CryptoFail
-    })?;
+    let provider = init_crypto_provider();
 
     let suite = provider
         .cipher_suites
@@ -235,6 +222,16 @@ pub fn derive_initial_key_material(
     };
 
     Ok((open, seal))
+}
+
+pub fn init_crypto_provider() -> &'static Arc<CryptoProvider> {
+    let mut provider = CryptoProvider::get_default();
+    if provider.is_none() {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        provider = CryptoProvider::get_default();
+    };
+
+    provider.expect("failed to init crypto provider")
 }
 
 pub fn verify_slices_are_equal(a: &[u8], b: &[u8]) -> Result<()> {

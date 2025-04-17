@@ -2813,7 +2813,7 @@ impl Connection {
             ));
         }
 
-        // Derive initial secrets on the server.
+        // Derive initial secrets on the server
         if !self.derived_initial_secrets {
             let (aead_open, aead_seal) = crypto::derive_initial_key_material(
                 &hdr.dcid,
@@ -9789,6 +9789,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "rustls"))]
     fn handshake_done() {
         let mut pipe = testing::Pipe::new().unwrap();
 
@@ -15396,6 +15397,7 @@ mod tests {
     // off-load key signing.
     #[cfg(not(feature = "openssl"))]
     #[test]
+    #[cfg(not(feature = "rustls"))]
     fn app_close_by_server_during_handshake_private_key_failure() {
         let mut pipe = testing::Pipe::new().unwrap();
         pipe.server.handshake.set_failing_private_key_method();

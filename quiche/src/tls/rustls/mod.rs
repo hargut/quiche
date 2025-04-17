@@ -3,15 +3,24 @@ use crate::tls::ExData;
 use crate::Error;
 use crate::Result;
 use std::fs::DirEntry;
+use std::io::Read;
 use std::sync::Arc;
 
-use crate::crypto::Level;
+use crate::crypto::{init_crypto_provider, Level};
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::pki_types::ServerName;
 use rustls::quic::ClientConnection;
+use rustls::quic::DirectionalKeys;
+use rustls::quic::KeyChange;
+use rustls::quic::Keys;
+use rustls::quic::PacketKey;
+use rustls::quic::PacketKeySet;
+use rustls::quic::Secrets;
+
+use rustls::crypto::CryptoProvider;
 use rustls::quic::Connection;
 use rustls::quic::ServerConnection;
 use rustls::quic::Version;
@@ -50,6 +59,8 @@ pub struct Context {
 // mod implementation
 impl Context {
     pub fn new() -> Result<Self> {
+        let _ = init_crypto_provider();
+
         Ok(Self {
             client_config: None,
             server_config: None,
@@ -70,6 +81,7 @@ impl Context {
             let Some(verify_store) = self.verify_ca_certificates_store.take()
             else {
                 // enabled but no store available
+                error!("verify_store: enabled but no store available");
                 return Err(Error::TlsFail);
             };
             Some(Arc::new(verify_store))
@@ -77,15 +89,20 @@ impl Context {
             None
         };
 
-        if self.server_config.is_none() {
+        if self.server_config.is_none() &&
+            !self.private_key_server.is_none() &&
+            !self.ca_certificates.is_none()
+        {
             let builder = ServerConfig::builder_with_protocol_versions(&[&TLS13]);
             let builder = if let Some(verify_store) = verify_store.clone() {
-                let client_vierifier =
-                    WebPkiClientVerifier::builder(verify_store)
-                        .build()
-                        .map_err(|_| Error::TlsFail)?;
+                let client_verifier = WebPkiClientVerifier::builder(verify_store)
+                    .build()
+                    .map_err(|_| {
+                        error!("client_verifier: failed to build");
+                        Error::TlsFail
+                    })?;
 
-                builder.with_client_cert_verifier(client_vierifier)
+                builder.with_client_cert_verifier(client_verifier)
             } else {
                 builder.with_no_client_auth()
             };
@@ -93,12 +110,14 @@ impl Context {
             let mut config = if let (Some(certs), Some(key)) =
                 (self.ca_certificates.clone(), self.private_key_server.take())
             {
-                builder
-                    .with_single_cert(certs, key)
-                    .map_err(|_| Error::TlsFail)?
+                builder.with_single_cert(certs, key).map_err(|e| {
+                    println!("certificate & key load failed: {}", e);
+                    Error::TlsFail
+                })?
             } else {
-                // server without ca & key config
+                // server without certificate & key config
                 // not supported in QUIC, TLS is mandatory
+                error!("server without certificate & key config not supported");
                 return Err(Error::TlsFail);
             };
 
@@ -110,7 +129,9 @@ impl Context {
                 //
                 // kMaxEarlyDataAccepted is the advertised number of plaintext
                 // bytes of early data that will be accepted.
-                config.max_early_data_size = 14336;
+
+                // INFO: rustls currently only allows 0 or 2^32-1
+                config.max_early_data_size = u32::MAX;
             }
 
             if self.alpns.len() > 0 {
@@ -174,6 +195,9 @@ impl Context {
             is_server: false,
             quic_transport_params: vec![],
             provided_data_outstanding: false,
+            key_material: None,
+            next_secrets: None,
+            zero_rtt_keys: None,
         })
     }
 
@@ -212,7 +236,10 @@ impl Context {
     ) -> Result<Vec<CertificateDer<'static>>> {
         let certificates: Result<Vec<CertificateDer>> =
             CertificateDer::pem_file_iter(file)
-                .map_err(|_| Error::TlsFail)?
+                .map_err(|e| {
+                    println!("failed to load ca certificates from pem file: {}", e);
+                    Error::TlsFail
+                })?
                 .map(|r| r.map_err(|_| Error::TlsFail))
                 .collect();
         Ok(certificates?)
@@ -284,6 +311,9 @@ pub struct Handshake {
     connection: Option<Connection>,
 
     provided_data_outstanding: bool,
+    key_material: Option<Keys>,
+    next_secrets: Option<Secrets>,
+    zero_rtt_keys: Option<DirectionalKeys>,
 }
 
 // mod implementation
@@ -338,38 +368,45 @@ impl Handshake {
         })
     }
 
-    pub fn provide_data(
-        &mut self, level: crypto::Level, buf: &[u8],
-    ) -> Result<()> {
-        // TODO: right before do_handshake in
-        // process_frame -> Frame::Crypto -> provide_data -> do_handshake
-        println!("provide_data level: {:?}, buf: {:?}", level, buf);
+    pub fn provide_data(&mut self, level: Level, buf: &[u8]) -> Result<()> {
+        let Some(conn) = &mut self.connection else {
+            return Err(Error::TlsFail);
+        };
+
         self.provided_data_outstanding = true;
-        // check level
-        // https://github.com/google/boringssl/blob/99bd1df99b2ada05877f36f85ff2f7f37e176fd6/ssl/ssl_lib.cc#L695
 
-        match level {
-            Level::Initial => {},
-            Level::ZeroRTT => {},
-            Level::Handshake => {},
-            Level::OneRTT => {},
-        }
+        if let Some(keys) = conn.write_hs(&mut buf.to_vec()) {
+            let keys = match keys {
+                KeyChange::Handshake { keys } => keys,
+                KeyChange::OneRtt { keys, next } => {
+                    self.next_secrets = Some(next);
+                    keys
+                },
+            };
 
-        // tls_append_handshake_data(ssl, Span(data, len));
+            self.key_material = Some(keys);
+        };
+
         Ok(())
     }
 
     pub fn do_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
+        debug_assert_eq!(self.is_server, ex_data.is_server);
+
         if self.is_server {
             let server_conn = ServerConnection::new(
                 self.server_config.clone(),
                 self.quic_version.clone(),
                 self.quic_transport_params.clone(),
             )
-            .map_err(|_| Error::TlsFail)?;
+            .map_err(|e| {
+                error!("failed to create server config {}", e);
+                Error::TlsFail
+            })?;
             self.connection = Some(server_conn.into())
         } else {
             let Some(hostname) = &self.hostname else {
+                error!("no hostname present, required for client config");
                 return Err(Error::TlsFail);
             };
             let client_conn = ClientConnection::new(
@@ -378,8 +415,17 @@ impl Handshake {
                 hostname.to_owned(),
                 self.quic_transport_params.clone(),
             )
-            .map_err(|_| Error::TlsFail)?;
+            .map_err(|e| {
+                error!("failed to create client config {}", e);
+                Error::TlsFail
+            })?;
             self.connection = Some(client_conn.into())
+        }
+
+        if let Some(conn) = &self.connection {
+            if let Some(keys) = conn.zero_rtt_keys() {
+                self.zero_rtt_keys = Some(keys)
+            }
         }
 
         Ok(())
@@ -398,7 +444,7 @@ impl Handshake {
         // check alerts
         // check renegotiate
         // check transport errors
-        todo!()
+        Ok(())
     }
 
     pub fn write_level(&self) -> crypto::Level {
@@ -444,6 +490,14 @@ impl Handshake {
     pub fn clear(&mut self) -> Result<()> {
         todo!()
     }
+
+    pub fn keys(&mut self) -> Option<Keys> {
+        self.key_material.take()
+    }
+
+    pub fn zero_rtt_keys(&mut self) -> Option<DirectionalKeys> {
+        self.zero_rtt_keys.take()
+    }
 }
 
 #[allow(unused_variables)]
@@ -472,6 +526,13 @@ impl Handshake {
     }
 
     pub fn is_in_early_data(&self) -> bool {
-        todo!()
+        let Some(conn) = &self.connection else {
+            return false;
+        };
+
+        match conn {
+            Connection::Client(c) => c.is_early_data_accepted(),
+            Connection::Server(s) => false,
+        }
     }
 }
