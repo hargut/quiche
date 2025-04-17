@@ -6,7 +6,7 @@ use std::fs::DirEntry;
 use std::io::Read;
 use std::sync::Arc;
 
-use crate::crypto::{init_crypto_provider, Level};
+use crate::crypto::{init_crypto_provider};
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
@@ -111,7 +111,7 @@ impl Context {
                 (self.ca_certificates.clone(), self.private_key_server.take())
             {
                 builder.with_single_cert(certs, key).map_err(|e| {
-                    println!("certificate & key load failed: {}", e);
+                    error!("certificate & key load failed: {}", e);
                     Error::TlsFail
                 })?
             } else {
@@ -147,7 +147,10 @@ impl Context {
             let builder = if let Some(verify_store) = verify_store.clone() {
                 let server_verifier = WebPkiServerVerifier::builder(verify_store)
                     .build()
-                    .map_err(|_| Error::TlsFail)?;
+                    .map_err(|e| {
+                        error!("failed to build server verifier: {}", e);
+                        Error::TlsFail
+                    })?;
 
                 builder.with_webpki_verifier(server_verifier)
             } else {
@@ -165,9 +168,10 @@ impl Context {
             let mut config = if let (Some(certs), Some(key)) =
                 (self.ca_certificates.take(), self.private_key_client.take())
             {
-                builder
-                    .with_client_auth_cert(certs, key)
-                    .map_err(|_| Error::TlsFail)?
+                builder.with_client_auth_cert(certs, key).map_err(|e| {
+                    error!("failed to set client auth: {}", e);
+                    Error::TlsFail
+                })?
             } else {
                 builder.with_no_client_auth()
             };
@@ -187,8 +191,14 @@ impl Context {
         }
 
         Ok(Handshake {
-            client_config: self.client_config.clone().ok_or(Error::TlsFail)?,
-            server_config: self.server_config.clone().ok_or(Error::TlsFail)?,
+            client_config: self.client_config.clone().ok_or_else(|| {
+                error!("no client config available");
+                Error::TlsFail
+            })?,
+            server_config: self.server_config.clone().ok_or_else(|| {
+                error!("no server config available");
+                Error::TlsFail
+            })?,
             hostname: None,
             quic_version: self.quic_version.clone(),
             connection: None,
@@ -198,6 +208,7 @@ impl Context {
             key_material: None,
             next_secrets: None,
             zero_rtt_keys: None,
+            write_level: crypto::Level::Initial,
         })
     }
 
@@ -211,9 +222,20 @@ impl Context {
         &mut self, path: &str,
     ) -> Result<()> {
         let files: Result<Vec<DirEntry>> = std::fs::read_dir(path)
-            .map_err(|_| Error::TlsFail)?
+            .map_err(|e| {
+                error!("failed to load verify locations from directory: {:?}", e);
+                Error::TlsFail
+            })?
             .into_iter()
-            .map(|rd| rd.map_err(|_| Error::TlsFail))
+            .map(|rd| {
+                rd.map_err(|e| {
+                    error!(
+                        "failed to load verify locations from directory: {:?}",
+                        e
+                    );
+                    Error::TlsFail
+                })
+            })
             .collect();
 
         let verify_certificates: Vec<CertificateDer> = files?
@@ -237,10 +259,18 @@ impl Context {
         let certificates: Result<Vec<CertificateDer>> =
             CertificateDer::pem_file_iter(file)
                 .map_err(|e| {
-                    println!("failed to load ca certificates from pem file: {}", e);
+                    println!(
+                        "failed to load ca certificates from pem file: {}",
+                        e
+                    );
                     Error::TlsFail
                 })?
-                .map(|r| r.map_err(|_| Error::TlsFail))
+                .map(|r| {
+                    r.map_err(|e| {
+                        error!("failed to load pem certificate: {}", e);
+                        Error::TlsFail
+                    })
+                })
                 .collect();
         Ok(certificates?)
     }
@@ -259,9 +289,15 @@ impl Context {
 
     pub fn use_privkey_file(&mut self, file: &str) -> Result<()> {
         let private_key_client =
-            PrivateKeyDer::from_pem_file(file).map_err(|_| Error::TlsFail)?;
+            PrivateKeyDer::from_pem_file(file).map_err(|e| {
+                error!("failed to load private key from pem: {}", e);
+                Error::TlsFail
+            })?;
         let private_key_server =
-            PrivateKeyDer::from_pem_file(file).map_err(|_| Error::TlsFail)?;
+            PrivateKeyDer::from_pem_file(file).map_err(|e| {
+                error!("failed to load private key from pem: {}", e);
+                Error::TlsFail
+            })?;
 
         // NOTE: storing it twice as PrivateKeyDer cannot be copied/cloned
         // ClientConfig & ServerConfig are built in new_handshake()
@@ -314,6 +350,8 @@ pub struct Handshake {
     key_material: Option<Keys>,
     next_secrets: Option<Secrets>,
     zero_rtt_keys: Option<DirectionalKeys>,
+
+    write_level: crypto::Level,
 }
 
 // mod implementation
@@ -329,7 +367,10 @@ impl Handshake {
 
     pub fn set_host_name(&mut self, name: &str) -> Result<()> {
         let name = ServerName::try_from(name)
-            .map_err(|_| Error::TlsFail)?
+            .map_err(|e| {
+                error!("failed to convert hostname: {}", e);
+                Error::TlsFail
+            })?
             .to_owned();
 
         self.hostname = Some(name);
@@ -368,14 +409,20 @@ impl Handshake {
         })
     }
 
-    pub fn provide_data(&mut self, level: Level, buf: &[u8]) -> Result<()> {
+    pub fn provide_data(&mut self, level: crypto::Level, buf: &[u8]) -> Result<()> {
         let Some(conn) = &mut self.connection else {
+            error!("no connection present");
             return Err(Error::TlsFail);
         };
 
         self.provided_data_outstanding = true;
 
-        if let Some(keys) = conn.write_hs(&mut buf.to_vec()) {
+        conn.read_hs(&mut buf.to_vec()).map_err(|e| {
+            error!("failed to read handshake data: {:?}", e);
+            Error::TlsFail
+        })?;
+
+/*        if let Some(keys) = conn.write_hs(&mut buf.to_vec()) {
             let keys = match keys {
                 KeyChange::Handshake { keys } => keys,
                 KeyChange::OneRtt { keys, next } => {
@@ -386,6 +433,7 @@ impl Handshake {
 
             self.key_material = Some(keys);
         };
+*/
 
         Ok(())
     }
@@ -448,7 +496,7 @@ impl Handshake {
     }
 
     pub fn write_level(&self) -> crypto::Level {
-        todo!()
+        self.write_level
     }
 
     pub fn cipher(&self) -> Option<crypto::Algorithm> {
