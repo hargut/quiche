@@ -24,6 +24,7 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+
 use std::fmt::Display;
 use std::ops::Index;
 use std::ops::IndexMut;
@@ -565,6 +566,45 @@ pub fn pkt_num_len(pn: u64, largest_acked: u64) -> usize {
     min_bits.div_ceil(8) as usize
 }
 
+#[cfg(feature = "rustls")]
+pub fn decrypt_hdr(
+    b: &mut octets::OctetsMut, hdr: &mut Header, aead: &crypto::Open,
+) -> Result<()> {
+    let mut first = {
+        let (first_buf, _) = b.split_at(1)?;
+        first_buf.as_ref()[0]
+    };
+
+    let mut pn_and_sample = b.peek_bytes_mut(MAX_PKT_NUM_LEN + SAMPLE_LEN)?;
+    let (mut ciphertext, sample) = pn_and_sample.split_at(MAX_PKT_NUM_LEN)?;
+    let ciphertext = ciphertext.as_mut();
+
+    aead.decrypt_hdr(sample.as_ref(), &mut first, ciphertext)?;
+
+    let pn_len = usize::from((first & PKT_NUM_MASK) + 1);
+    let pkt_num = match pn_len {
+        1 => u64::from(b.get_u8()?),
+        2 => u64::from(b.get_u16()?),
+        3 => u64::from(b.get_u24()?),
+        4 => u64::from(b.get_u32()?),
+        _ => return Err(Error::InvalidPacket),
+    };
+
+    // Write decrypted first byte back into the input buffer.
+    let (mut first_buf, _) = b.split_at(1)?;
+    first_buf.as_mut()[0] = first;
+
+    hdr.pkt_num = pkt_num;
+    hdr.pkt_num_len = pn_len;
+
+    if hdr.ty == Type::Short {
+        hdr.key_phase = (first & KEY_PHASE_BIT) != 0;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(feature = "rustls"))]
 pub fn decrypt_hdr(
     b: &mut octets::OctetsMut, hdr: &mut Header, aead: &crypto::Open,
 ) -> Result<()> {
@@ -642,6 +682,26 @@ pub fn decode_pkt_num(largest_pn: u64, truncated_pn: u64, pn_len: usize) -> u64 
     candidate_pn
 }
 
+#[cfg(feature = "rustls")]
+pub fn decrypt_pkt<'a>(
+    b: &'a mut octets::OctetsMut, pn: u64, pn_len: usize, payload_len: usize,
+    aead: &crypto::Open,
+) -> Result<octets::Octets<'a>> {
+    let payload_offset = b.off();
+
+    let (header, mut payload) = b.split_at(payload_offset)?;
+
+    let payload_len = payload_len
+        .checked_sub(pn_len)
+        .ok_or(Error::InvalidPacket)?;
+
+    let payload_len =
+        aead.open_with_u64_counter(pn, header.as_ref(), payload.as_mut())?;
+
+    Ok(b.get_bytes(payload_len)?)
+}
+
+#[cfg(not(feature = "rustls"))]
 pub fn decrypt_pkt<'a>(
     b: &'a mut octets::OctetsMut, pn: u64, pn_len: usize, payload_len: usize,
     aead: &crypto::Open,
@@ -662,6 +722,26 @@ pub fn decrypt_pkt<'a>(
     Ok(b.get_bytes(payload_len)?)
 }
 
+#[cfg(feature = "rustls")]
+pub fn encrypt_hdr(
+    b: &mut octets::OctetsMut, pn_len: usize, payload: &[u8], aead: &crypto::Seal,
+) -> Result<()> {
+    let sample = &payload
+        [MAX_PKT_NUM_LEN - pn_len..SAMPLE_LEN + (MAX_PKT_NUM_LEN - pn_len)];
+    let (mut first, mut rest) = b.split_at(1)?;
+    let mut first = first.as_mut()[0];
+    let pn_buf = rest.slice_last(pn_len)?;
+
+    aead.encrypt_hdr(sample, &mut first, pn_buf)?;
+
+    // Write encrypted first byte back into the input buffer.
+    let (mut first_buf, _) = b.split_at(1)?;
+    first_buf.as_mut()[0] = first;
+
+    Ok(())
+}
+
+#[cfg(not(feature = "rustls"))]
 pub fn encrypt_hdr(
     b: &mut octets::OctetsMut, pn_len: usize, payload: &[u8], aead: &crypto::Seal,
 ) -> Result<()> {
@@ -1515,6 +1595,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "rustls"))]
     fn decrypt_chacha20() {
         let secret = [
             0x9a, 0xc3, 0x12, 0xa7, 0xf8, 0x77, 0x46, 0x8e, 0xbe, 0x69, 0x42,
@@ -1877,6 +1958,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "rustls"))]
     fn encrypt_chacha20() {
         let secret = [
             0x9a, 0xc3, 0x12, 0xa7, 0xf8, 0x77, 0x46, 0x8e, 0xbe, 0x69, 0x42,

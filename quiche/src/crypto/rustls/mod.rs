@@ -138,19 +138,18 @@ impl Seal {
         &self, counter: u64, ad: &[u8], buf: &mut [u8], in_len: usize,
         extra_in: Option<&[u8]>,
     ) -> Result<usize> {
-
         if (in_len + self.packet_key.tag_len()) > buf.len() {
             error!("provided buffer size not sufficient for data and tag");
-            return Err(Error::CryptoFail)
+            return Err(Error::CryptoFail);
         }
 
-        let tag =
-            self.packet_key
-                .encrypt_in_place(counter, ad, buf)
-                .map_err(|e| {
-                    error!("failed to encrypt packet: {:?}", e);
-                    Error::CryptoFail
-                })?;
+        let tag = self
+            .packet_key
+            .encrypt_in_place(counter, ad, &mut buf[..in_len])
+            .map_err(|e| {
+                error!("failed to encrypt packet: {:?}", e);
+                Error::CryptoFail
+            })?;
 
         let tag_len = tag.as_ref().len();
         let tag = tag.as_ref();
@@ -220,8 +219,6 @@ pub fn derive_initial_key_material(
         1 => Version::V1,
         _ => return Err(Error::CryptoFail),
     };
-
-    error!("side: {:?}, is_server: {:?}", side, is_server);
 
     let keys =
         Keys::initial(version, quic_suite.suite, quic_suite.quic, cid, side);
