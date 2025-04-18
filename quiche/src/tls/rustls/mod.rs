@@ -1,22 +1,22 @@
 use std::fs::DirEntry;
 use std::sync::Arc;
 
+use crate::crypto::init_crypto_provider;
+use crate::crypto::Algorithm;
+use crate::crypto::Level;
 use crate::packet;
 use crate::tls::ExData;
 use crate::Error;
 use crate::Result;
 use crate::TransportParams;
-use crate::crypto::init_crypto_provider;
-use crate::crypto::Algorithm;
-use crate::crypto::Level;
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::pki_types::ServerName;
 use rustls::quic::ClientConnection;
-use rustls::quic::KeyChange;
 use rustls::quic::Connection;
+use rustls::quic::KeyChange;
 use rustls::quic::ServerConnection;
 use rustls::quic::Version;
 use rustls::server::WebPkiClientVerifier;
@@ -120,7 +120,7 @@ impl Context {
             if self.enable_keylog {
                 config.key_log = Arc::new(KeyLogFile::new());
             }
-            if self.enable_early_data {
+             if self.enable_early_data {
                 // matching boringssl default
                 //
                 // kMaxEarlyDataAccepted is the advertised number of plaintext
@@ -474,7 +474,9 @@ impl Handshake {
 
     // peer/receive Crypto frame data
     pub fn provide_data(
-        &mut self, level: Level, buf: &[u8], // TODO: is there any use of level in rustls on read_hs?
+        &mut self,
+        level: Level,
+        buf: &[u8], // TODO: is there any use of level in rustls on read_hs?
     ) -> Result<()> {
         error!(
             "provide_data: side: {:?}, level: {:?}",
@@ -519,20 +521,21 @@ impl Handshake {
                 &mut ex_data.pkt_num_spaces[packet::Epoch::Application],
         };
 
-        error!(
-            "do_handshake: side: {:?}, level: {:?}",
-            self.side, self.highest_level
-        );
         let mut data_written = false;
         loop {
             let mut buf = Vec::new();
             match conn.write_hs(&mut buf) {
                 None => {},
                 Some(keys) => {
-                    assert!(true, "required to handle key updates");
                     match keys {
-                        KeyChange::Handshake { .. } => {},
-                        KeyChange::OneRtt { .. } => {},
+                        KeyChange::Handshake { keys } => {
+                            assert!(false, "required to handle handshake keys");
+                            ()
+                        },
+                        KeyChange::OneRtt { keys, next } => {
+                            assert!(false, "required to handle keys and next secrets");
+                            ()
+                        },
                     }
                 },
             };
@@ -545,23 +548,22 @@ impl Handshake {
                 .crypto_stream
                 .send
                 .write(buf.as_slice(), false)?;
-            error!(
-                "do_handshake: side: {:?}, written: {}",
-                self.side,
-                buf.len()
-            );
+            error!("handshake: side={:?}, level={:?}, sent={}", self.side, self.highest_level, buf.len());
+            error!("buf: {:?}", buf);
             data_written = true;
         }
 
-        let alpn = match conn.alpn_protocol() {
-            None => "",
-            Some(alpn) => str::from_utf8(alpn).unwrap(),
-        };
-        error!("do_handshake: side: {:?}, alpn: {:?}", self.side, alpn);
         error!(
-            "do_handshake: side: {:?}, handshake_kind: {:?}",
+            "handshake: side={:?}, kind={:?}, ongoing={:?}, alpn={:?}",
             self.side,
-            conn.handshake_kind()
+            conn.handshake_kind(),
+            conn.is_handshaking(),
+            match conn.alpn_protocol() {
+                None => "",
+                Some(alpn) => {
+                    str::from_utf8(alpn).unwrap()
+                },
+            }
         );
 
         match self.highest_level {
@@ -570,22 +572,17 @@ impl Handshake {
                 if data_written {
                     self.highest_level = Level::Handshake;
                 },
-            Level::Handshake => {
-                error!(
-                    "do_handshake: side: {:?}, is_handshaking: {:?}",
-                    self.side,
-                    conn.is_handshaking()
-                );
+            Level::Handshake =>
                 if !conn.is_handshaking() {
                     self.highest_level = Level::OneRTT
-                }
-            },
+                },
         }
 
         Ok(())
     }
 
-    pub fn process_post_handshake(&mut self, ex_data: &mut ExData) -> Result<()> { // TODO: is noop sufficient for the whole function?
+    pub fn process_post_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
+        // TODO: is noop sufficient for the whole function?
         // If SSL_provide_quic_data hasn't been called since we last called
         // SSL_process_quic_post_handshake, then there's nothing to do.
         if !self.provided_data_outstanding {
