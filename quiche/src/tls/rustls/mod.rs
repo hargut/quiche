@@ -1,26 +1,21 @@
-use crate::crypto;
+use std::fs::DirEntry;
+use std::sync::Arc;
+
+use crate::packet;
 use crate::tls::ExData;
 use crate::Error;
 use crate::Result;
-use std::fs::DirEntry;
-use std::io::Read;
-use std::sync::Arc;
-
-use crate::crypto::{init_crypto_provider};
+use crate::TransportParams;
+use crate::crypto::init_crypto_provider;
+use crate::crypto::Algorithm;
+use crate::crypto::Level;
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::pki_types::ServerName;
 use rustls::quic::ClientConnection;
-use rustls::quic::DirectionalKeys;
 use rustls::quic::KeyChange;
-use rustls::quic::Keys;
-use rustls::quic::PacketKey;
-use rustls::quic::PacketKeySet;
-use rustls::quic::Secrets;
-
-use rustls::crypto::CryptoProvider;
 use rustls::quic::Connection;
 use rustls::quic::ServerConnection;
 use rustls::quic::Version;
@@ -32,6 +27,7 @@ use rustls::HandshakeKind;
 use rustls::KeyLogFile;
 use rustls::RootCertStore;
 use rustls::ServerConfig;
+use rustls::Side;
 
 pub struct Context {
     client_config: Option<Arc<ClientConfig>>,
@@ -143,7 +139,6 @@ impl Context {
 
         if self.client_config.is_none() {
             let builder = ClientConfig::builder_with_protocol_versions(&[&TLS13]);
-
             let builder = if let Some(verify_store) = verify_store.clone() {
                 let server_verifier = WebPkiServerVerifier::builder(verify_store)
                     .build()
@@ -159,7 +154,18 @@ impl Context {
                 // intended on rustls
                 let certificates_result =
                     rustls_native_certs::load_native_certs();
-                let mut store = RootCertStore::empty();
+                // FIXME: check how this is handled in quiche, and build the same
+                // pattern this is quick fix to successfully
+                // validate certificates issued by openssl
+                // likely not the same behaviour als quiche
+                let mut store = if let Some(store) =
+                    self.verify_ca_certificates_store.take()
+                {
+                    store
+                } else {
+                    RootCertStore::empty()
+                };
+
                 store.add_parsable_certificates(certificates_result.certs);
 
                 builder.with_root_certificates(store)
@@ -199,16 +205,13 @@ impl Context {
                 error!("no server config available");
                 Error::TlsFail
             })?,
-            hostname: None,
             quic_version: self.quic_version.clone(),
             connection: None,
-            is_server: false,
+            side: Side::Client,
             quic_transport_params: vec![],
             provided_data_outstanding: false,
-            key_material: None,
-            next_secrets: None,
-            zero_rtt_keys: None,
-            write_level: crypto::Level::Initial,
+            highest_level: Level::Initial,
+            hostname: None,
         })
     }
 
@@ -338,26 +341,49 @@ impl Context {
 pub struct Handshake {
     client_config: Arc<ClientConfig>,
     server_config: Arc<ServerConfig>,
-    hostname: Option<ServerName<'static>>,
     quic_version: Version,
 
-    is_server: bool,
+    side: Side,
     quic_transport_params: Vec<u8>,
 
     connection: Option<Connection>,
 
     provided_data_outstanding: bool,
-    key_material: Option<Keys>,
-    next_secrets: Option<Secrets>,
-    zero_rtt_keys: Option<DirectionalKeys>,
 
-    write_level: crypto::Level,
+    highest_level: Level,
+    hostname: Option<ServerName<'static>>,
 }
 
 // mod implementation
 impl Handshake {
     pub fn init(&mut self, is_server: bool) -> Result<()> {
-        self.is_server = is_server;
+        self.side = match is_server {
+            true => Side::Server,
+            false => Side::Client,
+        };
+
+        // NOTE: only create server config in init()
+        // client requires hostname to successfully build a connection
+        // creating client config in set_host_name() which is called after init()
+        if matches!(self.side, Side::Server) {
+            let server_conn = ServerConnection::new(
+                self.server_config.clone(),
+                self.quic_version.clone(),
+                self.quic_transport_params.clone(),
+            )
+            .map_err(|e| {
+                error!("failed to create server config {}", e);
+                Error::TlsFail
+            })?;
+
+            error!(
+                "server transport params: {:?}",
+                Self::ctp(&self.quic_transport_params, self.side)
+            );
+
+            self.connection = Some(server_conn.into())
+        }
+
         Ok(())
     }
 
@@ -366,18 +392,55 @@ impl Handshake {
     }
 
     pub fn set_host_name(&mut self, name: &str) -> Result<()> {
-        let name = ServerName::try_from(name)
+        let hostname = ServerName::try_from(name)
             .map_err(|e| {
                 error!("failed to convert hostname: {}", e);
                 Error::TlsFail
             })?
             .to_owned();
 
-        self.hostname = Some(name);
+        // FIXME: remove, only for logging purpose
+        self.hostname = Some(hostname.clone().to_owned());
+
+        if matches!(self.side, Side::Client) {
+            // NOTE: generates ClientHello
+            let client_conn = ClientConnection::new(
+                self.client_config.clone(),
+                self.quic_version.clone(),
+                hostname.to_owned(),
+                self.quic_transport_params.clone(),
+            )
+            .map_err(|e| {
+                error!("failed to create client config {}", e);
+                Error::TlsFail
+            })?;
+
+            error!(
+                "client transport params: {:?}",
+                Self::ctp(&self.quic_transport_params, self.side)
+            );
+
+            self.connection = Some(client_conn.into())
+        }
+
         Ok(())
     }
 
+    fn ctp(params: &[u8], side: Side) -> TransportParams {
+        let is_server = match side {
+            Side::Client => false,
+            Side::Server => true,
+        };
+        TransportParams::decode(&params, is_server, None).unwrap()
+    }
+
     pub fn set_quic_transport_params(&mut self, buf: &[u8]) -> Result<()> {
+        error!(
+            "SET side: {:?}, transport_params: {:?}",
+            self.side,
+            Self::ctp(buf, self.side)
+        );
+
         self.quic_transport_params = buf.to_vec();
         Ok(())
     }
@@ -409,77 +472,120 @@ impl Handshake {
         })
     }
 
-    pub fn provide_data(&mut self, level: crypto::Level, buf: &[u8]) -> Result<()> {
+    // peer/receive Crypto frame data
+    pub fn provide_data(
+        &mut self, level: Level, buf: &[u8], // TODO: is there any use of level in rustls on read_hs?
+    ) -> Result<()> {
+        error!(
+            "provide_data: side: {:?}, level: {:?}",
+            self.side, self.highest_level
+        );
+
         let Some(conn) = &mut self.connection else {
             error!("no connection present");
             return Err(Error::TlsFail);
         };
 
+        // FIXME: are post processing steps required ?
         self.provided_data_outstanding = true;
+
+        match conn {
+            Connection::Client(_) => error!("hostname: {:?}", self.hostname),
+            Connection::Server(sc) =>
+                error!("servername: {:?}", sc.server_name()),
+        }
 
         conn.read_hs(&mut buf.to_vec()).map_err(|e| {
             error!("failed to read handshake data: {:?}", e);
             Error::TlsFail
         })?;
 
-/*        if let Some(keys) = conn.write_hs(&mut buf.to_vec()) {
-            let keys = match keys {
-                KeyChange::Handshake { keys } => keys,
-                KeyChange::OneRtt { keys, next } => {
-                    self.next_secrets = Some(next);
-                    keys
+        Ok(())
+    }
+
+    // local/send Crypto frame data
+    pub fn do_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
+        let Some(conn) = &mut self.connection else {
+            error!("no connection present");
+            return Err(Error::TlsFail);
+        };
+
+        let pkt_num_space = match self.highest_level {
+            Level::Initial => &mut ex_data.pkt_num_spaces[packet::Epoch::Initial],
+            Level::ZeroRTT => unreachable!(),
+            Level::Handshake =>
+                &mut ex_data.pkt_num_spaces[packet::Epoch::Handshake],
+            Level::OneRTT =>
+                &mut ex_data.pkt_num_spaces[packet::Epoch::Application],
+        };
+
+        error!(
+            "do_handshake: side: {:?}, level: {:?}",
+            self.side, self.highest_level
+        );
+        let mut data_written = false;
+        loop {
+            let mut buf = Vec::new();
+            match conn.write_hs(&mut buf) {
+                None => {},
+                Some(keys) => {
+                    assert!(true, "required to handle key updates");
+                    match keys {
+                        KeyChange::Handshake { .. } => {},
+                        KeyChange::OneRtt { .. } => {},
+                    }
                 },
             };
 
-            self.key_material = Some(keys);
-        };
-*/
-
-        Ok(())
-    }
-
-    pub fn do_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
-        debug_assert_eq!(self.is_server, ex_data.is_server);
-
-        if self.is_server {
-            let server_conn = ServerConnection::new(
-                self.server_config.clone(),
-                self.quic_version.clone(),
-                self.quic_transport_params.clone(),
-            )
-            .map_err(|e| {
-                error!("failed to create server config {}", e);
-                Error::TlsFail
-            })?;
-            self.connection = Some(server_conn.into())
-        } else {
-            let Some(hostname) = &self.hostname else {
-                error!("no hostname present, required for client config");
-                return Err(Error::TlsFail);
-            };
-            let client_conn = ClientConnection::new(
-                self.client_config.clone(),
-                self.quic_version.clone(),
-                hostname.to_owned(),
-                self.quic_transport_params.clone(),
-            )
-            .map_err(|e| {
-                error!("failed to create client config {}", e);
-                Error::TlsFail
-            })?;
-            self.connection = Some(client_conn.into())
-        }
-
-        if let Some(conn) = &self.connection {
-            if let Some(keys) = conn.zero_rtt_keys() {
-                self.zero_rtt_keys = Some(keys)
+            if buf.is_empty() {
+                break;
             }
+
+            pkt_num_space
+                .crypto_stream
+                .send
+                .write(buf.as_slice(), false)?;
+            error!(
+                "do_handshake: side: {:?}, written: {}",
+                self.side,
+                buf.len()
+            );
+            data_written = true;
+        }
+
+        let alpn = match conn.alpn_protocol() {
+            None => "",
+            Some(alpn) => str::from_utf8(alpn).unwrap(),
+        };
+        error!("do_handshake: side: {:?}, alpn: {:?}", self.side, alpn);
+        error!(
+            "do_handshake: side: {:?}, handshake_kind: {:?}",
+            self.side,
+            conn.handshake_kind()
+        );
+
+        match self.highest_level {
+            Level::ZeroRTT | Level::OneRTT => (),
+            Level::Initial =>
+                if data_written {
+                    self.highest_level = Level::Handshake;
+                },
+            Level::Handshake => {
+                error!(
+                    "do_handshake: side: {:?}, is_handshaking: {:?}",
+                    self.side,
+                    conn.is_handshaking()
+                );
+                if !conn.is_handshaking() {
+                    self.highest_level = Level::OneRTT
+                }
+            },
         }
 
         Ok(())
     }
 
-    pub fn process_post_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
+    pub fn process_post_handshake(&mut self, ex_data: &mut ExData) -> Result<()> { // TODO: is noop sufficient for the whole function?
         // If SSL_provide_quic_data hasn't been called since we last called
         // SSL_process_quic_post_handshake, then there's nothing to do.
         if !self.provided_data_outstanding {
@@ -495,11 +601,11 @@ impl Handshake {
         Ok(())
     }
 
-    pub fn write_level(&self) -> crypto::Level {
-        self.write_level
+    pub fn write_level(&self) -> Level {
+        self.highest_level
     }
 
-    pub fn cipher(&self) -> Option<crypto::Algorithm> {
+    pub fn cipher(&self) -> Option<Algorithm> {
         let suite = self
             .connection
             .as_ref()
@@ -507,12 +613,10 @@ impl Handshake {
         let Some(suite) = suite else { return None };
 
         match suite.suite() {
-            CipherSuite::TLS13_AES_128_GCM_SHA256 =>
-                Some(crypto::Algorithm::AES128_GCM),
-            CipherSuite::TLS13_AES_256_GCM_SHA384 =>
-                Some(crypto::Algorithm::AES256_GCM),
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Some(Algorithm::AES128_GCM),
+            CipherSuite::TLS13_AES_256_GCM_SHA384 => Some(Algorithm::AES256_GCM),
             CipherSuite::TLS13_CHACHA20_POLY1305_SHA256 =>
-                Some(crypto::Algorithm::ChaCha20_Poly1305),
+                Some(Algorithm::ChaCha20_Poly1305),
             _ => None,
         }
     }
@@ -537,14 +641,6 @@ impl Handshake {
 
     pub fn clear(&mut self) -> Result<()> {
         todo!()
-    }
-
-    pub fn keys(&mut self) -> Option<Keys> {
-        self.key_material.take()
-    }
-
-    pub fn zero_rtt_keys(&mut self) -> Option<DirectionalKeys> {
-        self.zero_rtt_keys.take()
     }
 }
 

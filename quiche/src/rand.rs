@@ -35,7 +35,7 @@ pub fn rand_bytes(buf: &mut [u8]) {
 
 #[cfg(feature = "rustls")]
 pub fn rand_bytes(buf: &mut [u8]) {
-    let mut provider = init_crypto_provider();
+    let provider = init_crypto_provider();
     provider.secure_random.fill(buf).unwrap()
 }
 

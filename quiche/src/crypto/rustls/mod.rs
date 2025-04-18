@@ -1,17 +1,10 @@
 use crate::crypto::Algorithm;
 use crate::Error;
 use crate::Result;
-use ring::aead;
-use rustls::crypto::cipher::AeadKey;
-use rustls::crypto::cipher::Iv;
-use rustls::quic;
-use rustls::quic::Algorithm as RustlsAlgorithm;
+
 use rustls::quic::HeaderProtectionKey;
 use rustls::quic::Keys;
 use rustls::quic::PacketKey as RustlsPacketKey;
-use rustls::quic::PacketKeySet;
-use rustls::quic::Suite;
-use rustls::quic::Tag;
 use rustls::quic::Version;
 use rustls::CipherSuite;
 use rustls::Side;
@@ -21,7 +14,6 @@ use std::sync::Arc;
 //#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
 // use aws_lc_rs::aead;
 
-use crate::frame::Frame::Crypto;
 use ring::aead::Aad;
 use ring::aead::LessSafeKey;
 use ring::aead::Nonce;
@@ -162,8 +154,7 @@ impl Seal {
     }
 
     pub fn alg(&self) -> Algorithm {
-        // self.alg
-        todo!()
+        self.algorithm
     }
 
     pub fn derive_next_packet_key(&self) -> Result<Seal> {
@@ -172,7 +163,7 @@ impl Seal {
 }
 
 pub fn derive_initial_key_material(
-    cid: &[u8], version: u32, is_server: bool, did_reset: bool,
+    cid: &[u8], version: u32, is_server: bool, did_reset: bool, // TODO: check & repsect effects of did_reset
 ) -> Result<(Open, Seal)> {
     let provider = init_crypto_provider();
 

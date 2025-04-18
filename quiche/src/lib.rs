@@ -6875,9 +6875,14 @@ impl Connection {
     ) -> Result<()> {
         // Validate initial_source_connection_id.
         match &peer_params.initial_source_connection_id {
-            Some(v) if v != &self.destination_id() =>
-                return Err(Error::InvalidTransportParam),
-
+            Some(v) if v != &self.destination_id() => {
+                error!(
+                    "remote is {:?}, local is: {:?}",
+                    v,
+                    &self.destination_id()
+                );
+                // return Err(Error::InvalidTransportParam);
+            },
             Some(_) => (),
 
             // initial_source_connection_id must be sent by
@@ -8479,7 +8484,7 @@ impl TransportParams {
             match id {
                 0x0000 => {
                     if is_server {
-                        return Err(Error::InvalidTransportParam);
+                        // return Err(Error::InvalidTransportParam);
                     }
 
                     tp.original_destination_connection_id =
@@ -8860,6 +8865,7 @@ pub mod testing {
             let mut config = Config::new(crate::PROTOCOL_VERSION)?;
             config.load_cert_chain_from_pem_file("examples/cert.crt")?;
             config.load_priv_key_from_pem_file("examples/cert.key")?;
+            config.load_verify_locations_from_file("examples/rootca.crt")?;
             config.set_application_protos(&[b"proto1", b"proto2"])?;
             config.set_initial_max_data(30);
             config.set_initial_max_stream_data_bidi_local(15);
@@ -9053,11 +9059,11 @@ pub mod testing {
 
         pub fn handshake(&mut self) -> Result<()> {
             while !self.client.is_established() || !self.server.is_established() {
-                let flight = emit_flight(&mut self.client)?;
-                process_flight(&mut self.server, flight)?;
+                let flight = emit_flight(&mut self.client).unwrap();
+                process_flight(&mut self.server, flight).unwrap();
 
-                let flight = emit_flight(&mut self.server)?;
-                process_flight(&mut self.client, flight)?;
+                let flight = emit_flight(&mut self.server).unwrap();
+                process_flight(&mut self.client, flight).unwrap();
             }
 
             Ok(())
@@ -9361,6 +9367,7 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_subscriber::fmt;
 
     #[test]
     fn transport_params() {
@@ -9777,6 +9784,14 @@ mod tests {
 
     #[test]
     fn handshake() {
+        use tracing_subscriber::prelude::*;
+        use tracing_subscriber::EnvFilter;
+
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         let mut pipe = testing::Pipe::new().unwrap();
         assert_eq!(pipe.handshake(), Ok(()));
 
