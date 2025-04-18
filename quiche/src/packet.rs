@@ -24,7 +24,6 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
 use std::fmt::Display;
 use std::ops::Index;
 use std::ops::IndexMut;
@@ -695,8 +694,10 @@ pub fn decrypt_pkt<'a>(
         .checked_sub(pn_len)
         .ok_or(Error::InvalidPacket)?;
 
+    let mut ciphertext = payload.peek_bytes_mut(payload_len)?;
+
     let payload_len =
-        aead.open_with_u64_counter(pn, header.as_ref(), payload.as_mut())?;
+        aead.open_with_u64_counter(pn, header.as_ref(), ciphertext.as_mut())?;
 
     Ok(b.get_bytes(payload_len)?)
 }
