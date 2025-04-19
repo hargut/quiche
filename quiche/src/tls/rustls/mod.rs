@@ -2,9 +2,11 @@ use std::fs::DirEntry;
 use std::sync::Arc;
 
 use crate::crypto::init_crypto_provider;
+use crate::crypto::key_material_from_keys;
 use crate::crypto::Algorithm;
 use crate::crypto::Level;
 use crate::packet;
+use crate::packet::PktNumSpace;
 use crate::tls::ExData;
 use crate::Error;
 use crate::Result;
@@ -120,7 +122,7 @@ impl Context {
             if self.enable_keylog {
                 config.key_log = Arc::new(KeyLogFile::new());
             }
-             if self.enable_early_data {
+            if self.enable_early_data {
                 // matching boringssl default
                 //
                 // kMaxEarlyDataAccepted is the advertised number of plaintext
@@ -507,52 +509,31 @@ impl Handshake {
 
     // local/send Crypto frame data
     pub fn do_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
-        let Some(conn) = &mut self.connection else {
+        if self.connection.is_none() {
             error!("no connection present");
             return Err(Error::TlsFail);
         };
 
-        let pkt_num_space = match self.highest_level {
-            Level::Initial => &mut ex_data.pkt_num_spaces[packet::Epoch::Initial],
-            Level::ZeroRTT => unreachable!(),
-            Level::Handshake =>
-                &mut ex_data.pkt_num_spaces[packet::Epoch::Handshake],
-            Level::OneRTT =>
-                &mut ex_data.pkt_num_spaces[packet::Epoch::Application],
-        };
-
-        let mut data_written = false;
         loop {
+            let current_level = self.highest_level.clone();
+
             let mut buf = Vec::new();
-            match conn.write_hs(&mut buf) {
-                None => {},
-                Some(keys) => {
-                    match keys {
-                        KeyChange::Handshake { keys } => {
-                            assert!(false, "required to handle handshake keys");
-                            ()
-                        },
-                        KeyChange::OneRtt { keys, next } => {
-                            assert!(false, "required to handle keys and next secrets");
-                            ()
-                        },
-                    }
-                },
+            let mut key_change =
+                self.connection.as_mut().unwrap().write_hs(&mut buf);
+
+            let mut level_upgraded = false;
+            if let Some(key_change) = key_change.take() {
+                level_upgraded = self.process_key_change(ex_data, key_change)?
             };
 
-            if buf.is_empty() {
+            if buf.is_empty() && !level_upgraded {
                 break;
             }
 
-            pkt_num_space
-                .crypto_stream
-                .send
-                .write(buf.as_slice(), false)?;
-            error!("handshake: side={:?}, level={:?}, sent={}", self.side, self.highest_level, buf.len());
-            error!("buf: {:?}", buf);
-            data_written = true;
+            self.write_crypto_stream(current_level, ex_data, buf.as_slice())?;
         }
 
+        let conn = self.connection.as_ref().unwrap();
         error!(
             "handshake: side={:?}, kind={:?}, ongoing={:?}, alpn={:?}",
             self.side,
@@ -566,18 +547,78 @@ impl Handshake {
             }
         );
 
-        match self.highest_level {
-            Level::ZeroRTT | Level::OneRTT => (),
-            Level::Initial =>
-                if data_written {
-                    self.highest_level = Level::Handshake;
-                },
-            Level::Handshake =>
-                if !conn.is_handshaking() {
-                    self.highest_level = Level::OneRTT
-                },
+        Ok(())
+    }
+
+    fn process_key_change(
+        &mut self, ex_data: &mut ExData, key_change: KeyChange,
+    ) -> Result<bool> {
+        let mut level_updated = false;
+        match key_change {
+            KeyChange::Handshake { keys } => {
+                match self.highest_level {
+                    Level::Initial => {
+                        let next_space =
+                            &mut ex_data.pkt_num_spaces[packet::Epoch::Handshake];
+
+                        if next_space.crypto_seal.is_some() ||
+                            next_space.crypto_open.is_some()
+                        {
+                            debug_assert!(
+                                false,
+                                "keys are already present for Handshake"
+                            );
+                        };
+
+                        self.highest_level = Level::Handshake;
+                        let (open, seal) = key_material_from_keys(keys, None)?;
+                        next_space.crypto_open = Some(open);
+                        next_space.crypto_seal = Some(seal);
+
+                        self.highest_level = Level::Handshake;
+                        return Ok(true);
+                    },
+                    Level::ZeroRTT | Level::Handshake | Level::OneRTT => {
+                        assert!(false, "required to handle handshake keys")
+                    },
+                };
+            },
+
+            KeyChange::OneRtt { keys, next } => {
+                error!("level: {:?}", self.highest_level);
+                let next_space =
+                    &mut ex_data.pkt_num_spaces[packet::Epoch::Application];
+                let (open, seal) = key_material_from_keys(keys, Some(next))?;
+                next_space.crypto_open = Some(open);
+                next_space.crypto_seal = Some(seal);
+
+                self.highest_level = Level::OneRTT;
+            },
         }
 
+        Ok(false)
+    }
+
+    fn write_crypto_stream(
+        &self, level: Level, ex_data: &mut ExData, mut data: &[u8],
+    ) -> Result<()> {
+        let pkt_num_space = match level {
+            Level::Initial => &mut ex_data.pkt_num_spaces[packet::Epoch::Initial],
+            Level::ZeroRTT => unreachable!(),
+            Level::Handshake =>
+                &mut ex_data.pkt_num_spaces[packet::Epoch::Handshake],
+            Level::OneRTT =>
+                &mut ex_data.pkt_num_spaces[packet::Epoch::Application],
+        };
+
+        pkt_num_space.crypto_stream.send.write(data, false)?;
+
+        error!(
+            "handshake: side={:?}, level={:?}, sent={}",
+            self.side,
+            self.highest_level,
+            data.len()
+        );
         Ok(())
     }
 

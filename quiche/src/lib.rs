@@ -2922,12 +2922,12 @@ impl Connection {
                 aead_next = Some((
                     self.pkt_num_spaces[epoch]
                         .crypto_open
-                        .as_ref()
+                        .as_mut()
                         .unwrap()
                         .derive_next_packet_key()?,
                     self.pkt_num_spaces[epoch]
                         .crypto_seal
-                        .as_ref()
+                        .as_mut()
                         .unwrap()
                         .derive_next_packet_key()?,
                 ));
@@ -7038,7 +7038,10 @@ impl Connection {
         };
 
         self.handshake_completed = self.handshake.is_completed();
-        error!("is_server: {}, handshake_completed: {}", self.is_server, self.handshake_completed);
+        error!(
+            "is_server: {}, handshake_completed: {}",
+            self.is_server, self.handshake_completed
+        );
 
         self.alpn = self.handshake.alpn_protocol().to_vec();
 
@@ -9129,14 +9132,14 @@ pub mod testing {
 
             let open_next = space
                 .crypto_open
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .derive_next_packet_key()
                 .unwrap();
 
             let seal_next = space
                 .crypto_seal
-                .as_ref()
+                .as_mut()
                 .unwrap()
                 .derive_next_packet_key()?;
 
