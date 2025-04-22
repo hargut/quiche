@@ -218,7 +218,7 @@ pub fn derive_initial_key_material(
     cid: &[u8],
     version: u32,
     is_server: bool,
-    did_reset: bool, // TODO: check & repsect effects of did_reset
+    did_reset: bool, // TODO: check & respect effects of did_reset
 ) -> Result<(Open, Seal)> {
     let provider = init_crypto_provider();
 

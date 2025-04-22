@@ -7,6 +7,7 @@ use crate::crypto::Algorithm;
 use crate::crypto::Level;
 use crate::packet;
 use crate::tls::ExData;
+use crate::ConnectionError;
 use crate::Error;
 use crate::Result;
 use crate::TransportParams;
@@ -30,6 +31,8 @@ use rustls::RootCertStore;
 use rustls::ServerConfig;
 use rustls::Side;
 
+const INTERNAL_ERROR: u64 = 0x01;
+
 pub struct Context {
     client_config: Option<Arc<ClientConfig>>,
     server_config: Option<Arc<ServerConfig>>,
@@ -45,13 +48,6 @@ pub struct Context {
     enable_early_data: bool,
     quic_version: Version,
 }
-
-// fn early_data_enabled(&self) -> bool {
-// match self {
-// Config::Server(cfg) => cfg.max_early_data_size > 0,
-// Config::Client(cfg) => cfg.enable_early_data
-// }
-// }
 
 // mod implementation
 impl Context {
@@ -472,7 +468,7 @@ impl Handshake {
                         return Err(Error::TlsFail);
                     };
 
-                    let server_conn = ServerConnection::new(
+                    let mut server_conn = ServerConnection::new(
                         server_config,
                         self.quic_version.clone(),
                         params.clone(),
@@ -482,14 +478,24 @@ impl Handshake {
                         Error::TlsFail
                     })?;
 
-                    self.connection = Some(server_conn.into());
-
                     if let Some(crypto_data) = self.provided_data.take() {
-                        self.provide_data(
-                            Level::Initial,
-                            crypto_data.as_slice(),
-                        )?;
-                    };
+                        match server_conn.read_hs(&crypto_data) {
+                            Ok(()) => { /* continue */ },
+                            Err(e) => {
+                                if ex_data.local_error.is_none() {
+                                    *ex_data.local_error = Some(ConnectionError {
+                                        is_app: false,
+                                        error_code: INTERNAL_ERROR,
+                                        reason: e.to_string().as_bytes().to_vec(),
+                                    })
+                                };
+                                error!("failed to read handshake data: {:?}", e);
+                                return Err(Error::TlsFail);
+                            },
+                        }
+                    }
+
+                    self.connection = Some(server_conn.into());
                 },
             }
         };
@@ -658,6 +664,7 @@ impl Handshake {
     }
 
     pub fn clear(&mut self) -> Result<()> {
+        self.connection = None;
         Ok(())
     }
 }

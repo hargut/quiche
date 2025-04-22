@@ -13331,10 +13331,6 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
-        #[cfg(feature = "rustls")]
-        config
-            .load_verify_locations_from_file("examples/rootca.crt")
-            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
