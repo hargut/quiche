@@ -6,7 +6,6 @@ use crate::crypto::key_material_from_keys;
 use crate::crypto::Algorithm;
 use crate::crypto::Level;
 use crate::packet;
-use crate::packet::PktNumSpace;
 use crate::tls::ExData;
 use crate::Error;
 use crate::Result;
@@ -203,10 +202,7 @@ impl Context {
                 error!("no client config available");
                 Error::TlsFail
             })?,
-            server_config: self.server_config.clone().ok_or_else(|| {
-                error!("no server config available");
-                Error::TlsFail
-            })?,
+            server_config: self.server_config.clone(),
             quic_version: self.quic_version.clone(),
             connection: None,
             side: Side::Client,
@@ -342,7 +338,7 @@ impl Context {
 
 pub struct Handshake {
     client_config: Arc<ClientConfig>,
-    server_config: Arc<ServerConfig>,
+    server_config: Option<Arc<ServerConfig>>,
     quic_version: Version,
 
     side: Side,
@@ -368,13 +364,18 @@ impl Handshake {
         // client requires hostname to successfully build a connection
         // creating client config in set_host_name() which is called after init()
         if matches!(self.side, Side::Server) {
+            let Some(server_config) = self.server_config.clone() else {
+                error!("server config not present for server side");
+                return Err(Error::TlsFail);
+            };
+
             let server_conn = ServerConnection::new(
-                self.server_config.clone(),
+                server_config,
                 self.quic_version.clone(),
                 self.quic_transport_params.clone(),
             )
             .map_err(|e| {
-                error!("failed to create server config {}", e);
+                error!("failed to create server connection {}", e);
                 Error::TlsFail
             })?;
 
@@ -553,7 +554,6 @@ impl Handshake {
     fn process_key_change(
         &mut self, ex_data: &mut ExData, key_change: KeyChange,
     ) -> Result<bool> {
-        let mut level_updated = false;
         match key_change {
             KeyChange::Handshake { keys } => {
                 match self.highest_level {
@@ -600,7 +600,7 @@ impl Handshake {
     }
 
     fn write_crypto_stream(
-        &self, level: Level, ex_data: &mut ExData, mut data: &[u8],
+        &self, level: Level, ex_data: &mut ExData, data: &[u8],
     ) -> Result<()> {
         let pkt_num_space = match level {
             Level::Initial => &mut ex_data.pkt_num_spaces[packet::Epoch::Initial],
@@ -678,7 +678,7 @@ impl Handshake {
     }
 
     pub fn clear(&mut self) -> Result<()> {
-        todo!()
+        Ok(())
     }
 }
 

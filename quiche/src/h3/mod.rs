@@ -3094,6 +3094,7 @@ pub mod testing {
             config.load_priv_key_from_pem_file(
                 &path_relative_to_manifest_dir("examples/cert.key"),
             )?;
+            config.load_verify_locations_from_file("examples/rootca.crt")?;
             config.set_application_protos(&[b"h3"])?;
             config.set_initial_max_data(1500);
             config.set_initial_max_stream_data_bidi_local(150);
@@ -3410,6 +3411,9 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::EnvFilter;
 
     use super::testing::*;
 
@@ -4235,6 +4239,11 @@ mod tests {
     #[test]
     /// Client sends multiple HEADERS before data.
     fn data_after_trailers_client() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         let mut s = Session::new().unwrap();
         s.handshake().unwrap();
 

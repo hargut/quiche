@@ -9372,6 +9372,9 @@ pub mod testing {
 mod tests {
     use super::*;
     use tracing_subscriber::fmt;
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::EnvFilter;
 
     #[test]
     fn transport_params() {
@@ -9564,6 +9567,10 @@ mod tests {
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config.verify_peer(false);
 
         let mut pipe = testing::Pipe::with_client_config(&mut config).unwrap();
@@ -9591,6 +9598,10 @@ mod tests {
         let mut config = Config::new(0xbabababa).unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.verify_peer(false);
 
@@ -9655,6 +9666,10 @@ mod tests {
         client_config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        client_config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         client_config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -9689,6 +9704,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -9757,6 +9776,10 @@ mod tests {
         let mut config = Config::new(0x1).unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_max_idle_timeout(999999);
         config.verify_peer(false);
@@ -10178,6 +10201,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -10321,6 +10348,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -10378,6 +10409,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -11859,6 +11894,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -12057,6 +12096,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -12218,6 +12261,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -12487,6 +12534,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(70);
@@ -12846,6 +12897,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -12904,6 +12959,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -12980,6 +13039,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -13246,6 +13309,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -13270,6 +13337,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -13336,6 +13407,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -13782,6 +13857,10 @@ mod tests {
     #[test]
     fn app_limited_true() {
         let mut config = Config::new(PROTOCOL_VERSION).unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -13820,9 +13899,18 @@ mod tests {
 
     #[test]
     fn app_limited_false() {
+        tracing_subscriber::registry()
+            .with(fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         let mut config = Config::new(PROTOCOL_VERSION).unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_initial_max_data(50000);
         config.set_initial_max_stream_data_bidi_local(50000);
@@ -13867,6 +13955,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -13933,6 +14025,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -14004,6 +14100,10 @@ mod tests {
     #[test]
     fn app_limited_false_no_frame() {
         let mut config = Config::new(PROTOCOL_VERSION).unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -14045,6 +14145,10 @@ mod tests {
     #[test]
     fn app_limited_false_no_header() {
         let mut config = Config::new(PROTOCOL_VERSION).unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -14086,6 +14190,10 @@ mod tests {
     #[test]
     fn app_limited_not_changed_on_no_new_frames() {
         let mut config = Config::new(PROTOCOL_VERSION).unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -14194,6 +14302,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -14418,6 +14530,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -14537,6 +14653,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -14958,6 +15078,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -15030,6 +15154,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -15066,6 +15194,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -15141,6 +15273,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -15186,6 +15322,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -15233,6 +15373,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -15284,6 +15428,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -15690,6 +15838,10 @@ mod tests {
         client_config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
+        #[cfg(feature = "rustls")]
+        client_config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         client_config.set_max_recv_udp_payload_size(1200);
 
         let mut server_config = Config::new(crate::PROTOCOL_VERSION).unwrap();
@@ -15775,6 +15927,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -15962,6 +16118,10 @@ mod tests {
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config.set_initial_max_data(12000);
         config.set_initial_max_stream_data_bidi_local(20000);
         config.set_initial_max_stream_data_bidi_remote(20000);
@@ -16027,6 +16187,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16086,6 +16250,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -16157,6 +16325,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16226,6 +16398,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -16312,6 +16488,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16369,6 +16549,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16415,6 +16599,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -16562,6 +16750,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16647,6 +16839,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16712,6 +16908,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16764,6 +16964,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16796,6 +17000,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -16849,6 +17057,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -16916,6 +17128,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -16938,6 +17154,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -17126,6 +17346,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -17340,6 +17564,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -17417,6 +17645,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -17483,6 +17715,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -17712,6 +17948,9 @@ mod tests {
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
         config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
+        config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
         config.set_initial_max_data(999999999);
@@ -17894,6 +18133,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -17993,6 +18236,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -18038,6 +18285,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])

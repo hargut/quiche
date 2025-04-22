@@ -3,7 +3,6 @@ use crate::Error;
 use crate::Result;
 
 use rustls::quic::HeaderProtectionKey;
-use rustls::quic::KeyChange;
 use rustls::quic::Keys;
 use rustls::quic::PacketKey as RustlsPacketKey;
 use rustls::quic::Secrets;
@@ -80,7 +79,7 @@ impl Open {
     ) -> Result<()> {
         let Some(hpk) = &self.header_protection_key else {
             error!("header protection key not available");
-            return Err(Error::CryptoFail)
+            return Err(Error::CryptoFail);
         };
 
         hpk.decrypt_in_place(sample, first, packet_number)
