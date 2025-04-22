@@ -3435,6 +3435,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -5399,6 +5403,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(1500);
         config.set_initial_max_stream_data_bidi_local(150);
@@ -5536,6 +5544,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(70);
         config.set_initial_max_stream_data_bidi_local(150);
@@ -5588,6 +5600,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(70);
@@ -5649,6 +5665,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(10000); // large connection-level flow control
@@ -5784,6 +5804,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(100000); // large connection-level flow control
         config.set_initial_max_stream_data_bidi_local(100000);
@@ -5855,6 +5879,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(100000); // large connection-level flow control
@@ -5989,6 +6017,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(69);
         config.set_initial_max_stream_data_bidi_local(150);
@@ -6044,6 +6076,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(1500);
         config.set_initial_max_stream_data_bidi_local(150);
@@ -6073,6 +6109,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(70);
@@ -6118,6 +6158,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(70);
@@ -6170,6 +6214,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(70);
@@ -6280,6 +6328,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(70);
@@ -6405,6 +6457,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(1500);
         config.set_initial_max_stream_data_bidi_local(150);
@@ -6448,6 +6504,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(1500);
@@ -6533,6 +6593,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(1500);
@@ -6908,6 +6972,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config.set_application_protos(&[b"h3"]).unwrap();
         config.set_initial_max_data(1500);
