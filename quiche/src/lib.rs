@@ -9006,6 +9006,10 @@ pub mod testing {
             config.set_initial_max_streams_bidi(3);
             config.set_initial_max_streams_uni(3);
             config.set_ack_delay_exponent(8);
+            #[cfg(feature = "rustls")]
+            config
+                .load_verify_locations_from_file("examples/rootca.crt")
+                .unwrap();
 
             Ok(Pipe {
                 client: connect(
@@ -13281,7 +13285,13 @@ mod tests {
         assert_eq!(pipe.handshake(), Ok(()));
 
         match pipe.client.peer_cert() {
-            Some(c) => assert_eq!(c.len(), 753),
+            Some(c) => {
+                #[cfg(feature = "rustls")]
+                assert_eq!(c.len(), 847);
+
+                #[cfg(not(feature = "rustls"))]
+                assert_eq!(c.len(), 753);
+            },
 
             None => panic!("missing server certificate"),
         }
@@ -13295,10 +13305,6 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
-            .unwrap();
-        #[cfg(feature = "rustls")]
-        config
-            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])

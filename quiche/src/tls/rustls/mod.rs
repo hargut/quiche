@@ -391,7 +391,7 @@ impl Handshake {
                 params
             } else {
                 &[]
-            }
+            };
         }
 
         debug_assert!(false, "connection not available {:?}", self.side);
@@ -416,11 +416,7 @@ impl Handshake {
     }
 
     // peer/receive Crypto frame data
-    pub fn provide_data(
-        &mut self,
-        _level: Level,
-        buf: &[u8],
-    ) -> Result<()> {
+    pub fn provide_data(&mut self, _level: Level, buf: &[u8]) -> Result<()> {
         error!(
             "provide_data: side: {:?}, level: {:?}",
             self.side, self.highest_level
@@ -489,7 +485,10 @@ impl Handshake {
                     self.connection = Some(server_conn.into());
 
                     if let Some(crypto_data) = self.provided_data.take() {
-                        self.provide_data(Level::Initial, crypto_data.as_slice())?;
+                        self.provide_data(
+                            Level::Initial,
+                            crypto_data.as_slice(),
+                        )?;
                     };
                 },
             }
@@ -681,11 +680,32 @@ impl Handshake {
     }
 
     pub fn peer_cert_chain(&self) -> Option<Vec<&[u8]>> {
-        todo!()
+        let Some(conn) = &self.connection else {
+            return None;
+        };
+
+        if let Some(certs) = conn.peer_certificates() {
+            let out: Vec<&[u8]> = certs.iter().map(|c| c.as_ref()).collect();
+            if out.len() > 0 {
+                Some(out)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
     pub fn peer_cert(&self) -> Option<&[u8]> {
-        todo!()
+        let Some(conn) = &self.connection else {
+            return None;
+        };
+
+        if let Some(certs) = conn.peer_certificates() {
+            certs.first().map(|c| c.as_ref())
+        } else {
+            None
+        }
     }
 
     pub fn is_in_early_data(&self) -> bool {
