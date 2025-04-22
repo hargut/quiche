@@ -206,8 +206,8 @@ impl Context {
             quic_version: self.quic_version.clone(),
             connection: None,
             side: Side::Client,
-            quic_transport_params: vec![],
-            provided_data_outstanding: false,
+            quic_transport_params: None,
+            provided_data: None,
             highest_level: Level::Initial,
             hostname: None,
         })
@@ -342,11 +342,11 @@ pub struct Handshake {
     quic_version: Version,
 
     side: Side,
-    quic_transport_params: Vec<u8>,
+    quic_transport_params: Option<Vec<u8>>,
 
     connection: Option<Connection>,
 
-    provided_data_outstanding: bool,
+    provided_data: Option<Vec<u8>>,
 
     highest_level: Level,
     hostname: Option<ServerName<'static>>,
@@ -359,33 +359,6 @@ impl Handshake {
             true => Side::Server,
             false => Side::Client,
         };
-
-        // NOTE: only create server config in init()
-        // client requires hostname to successfully build a connection
-        // creating client config in set_host_name() which is called after init()
-        if matches!(self.side, Side::Server) {
-            let Some(server_config) = self.server_config.clone() else {
-                error!("server config not present for server side");
-                return Err(Error::TlsFail);
-            };
-
-            let server_conn = ServerConnection::new(
-                server_config,
-                self.quic_version.clone(),
-                self.quic_transport_params.clone(),
-            )
-            .map_err(|e| {
-                error!("failed to create server connection {}", e);
-                Error::TlsFail
-            })?;
-
-            error!(
-                "server transport params: {:?}",
-                Self::ctp(&self.quic_transport_params, self.side)
-            );
-
-            self.connection = Some(server_conn.into())
-        }
 
         Ok(())
     }
@@ -402,60 +375,27 @@ impl Handshake {
             })?
             .to_owned();
 
-        // FIXME: remove, only for logging purpose
         self.hostname = Some(hostname.clone().to_owned());
-
-        if matches!(self.side, Side::Client) {
-            // NOTE: generates ClientHello
-            let client_conn = ClientConnection::new(
-                self.client_config.clone(),
-                self.quic_version.clone(),
-                hostname.to_owned(),
-                self.quic_transport_params.clone(),
-            )
-            .map_err(|e| {
-                error!("failed to create client config {}", e);
-                Error::TlsFail
-            })?;
-
-            error!(
-                "client transport params: {:?}",
-                Self::ctp(&self.quic_transport_params, self.side)
-            );
-
-            self.connection = Some(client_conn.into())
-        }
-
         Ok(())
     }
 
-    fn ctp(params: &[u8], side: Side) -> TransportParams {
-        let is_server = match side {
-            Side::Client => false,
-            Side::Server => true,
-        };
-        TransportParams::decode(&params, is_server, None).unwrap()
-    }
-
     pub fn set_quic_transport_params(&mut self, buf: &[u8]) -> Result<()> {
-        error!(
-            "SET side: {:?}, transport_params: {:?}",
-            self.side,
-            Self::ctp(buf, self.side)
-        );
-
-        self.quic_transport_params = buf.to_vec();
+        self.quic_transport_params = Some(buf.to_vec());
         Ok(())
     }
 
     pub fn quic_transport_params(&self) -> &[u8] {
+        // peer/remote transport parameters
         if let Some(conn) = &self.connection {
-            if let Some(params) = conn.quic_transport_parameters() {
-                return params;
+            return if let Some(params) = conn.quic_transport_parameters() {
+                params
+            } else {
+                &[]
             }
         }
 
-        self.quic_transport_params.as_slice()
+        debug_assert!(false, "connection not available {:?}", self.side);
+        &[]
     }
 
     pub fn alpn_protocol(&self) -> &[u8] {
@@ -478,8 +418,8 @@ impl Handshake {
     // peer/receive Crypto frame data
     pub fn provide_data(
         &mut self,
-        level: Level,
-        buf: &[u8], // TODO: is there any use of level in rustls on read_hs?
+        _level: Level,
+        buf: &[u8],
     ) -> Result<()> {
         error!(
             "provide_data: side: {:?}, level: {:?}",
@@ -487,18 +427,10 @@ impl Handshake {
         );
 
         let Some(conn) = &mut self.connection else {
-            error!("no connection present");
-            return Err(Error::TlsFail);
+            error!("no connection present {:?}", self.side);
+            self.provided_data = Some(buf.to_vec());
+            return Ok(());
         };
-
-        // FIXME: are post processing steps required ?
-        self.provided_data_outstanding = true;
-
-        match conn {
-            Connection::Client(_) => error!("hostname: {:?}", self.hostname),
-            Connection::Server(sc) =>
-                error!("servername: {:?}", sc.server_name()),
-        }
 
         conn.read_hs(&mut buf.to_vec()).map_err(|e| {
             error!("failed to read handshake data: {:?}", e);
@@ -511,8 +443,56 @@ impl Handshake {
     // local/send Crypto frame data
     pub fn do_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
         if self.connection.is_none() {
-            error!("no connection present");
-            return Err(Error::TlsFail);
+            error!("no connection present {:?}", self.side);
+
+            let Some(params) = self.quic_transport_params.clone() else {
+                error!("missing transport parameters {:?}", self.side);
+                return Err(Error::TlsFail);
+            };
+
+            match self.side {
+                Side::Client => {
+                    let Some(hostname) = self.hostname.clone() else {
+                        error!("hostname not present");
+                        return Err(Error::TlsFail);
+                    };
+
+                    // NOTE: generates ClientHello
+                    let client_conn = ClientConnection::new(
+                        self.client_config.clone(),
+                        self.quic_version.clone(),
+                        hostname.to_owned(),
+                        params.clone(),
+                    )
+                    .map_err(|e| {
+                        error!("failed to create client config {}", e);
+                        Error::TlsFail
+                    })?;
+                    self.connection = Some(client_conn.into())
+                },
+                Side::Server => {
+                    let Some(server_config) = self.server_config.clone() else {
+                        error!("server config not present for server side");
+                        return Err(Error::TlsFail);
+                    };
+
+                    let server_conn = ServerConnection::new(
+                        server_config,
+                        self.quic_version.clone(),
+                        params.clone(),
+                    )
+                    .map_err(|e| {
+                        error!("failed to create server connection {}", e);
+                        Error::TlsFail
+                    })?;
+
+                    self.connection = Some(server_conn.into());
+
+                    if let Some(crypto_data) = self.provided_data.take() {
+                        self.provide_data(Level::Initial, crypto_data.as_slice())?;
+                    };
+                },
+            }
         };
 
         loop {
@@ -626,10 +606,11 @@ impl Handshake {
         // TODO: is noop sufficient for the whole function?
         // If SSL_provide_quic_data hasn't been called since we last called
         // SSL_process_quic_post_handshake, then there's nothing to do.
-        if !self.provided_data_outstanding {
+        if !self.provided_data.is_none() {
             return Ok(());
         }
-        self.provided_data_outstanding = false;
+
+        error!("process_post_handshake {:?}", self.side);
 
         // https://github.com/google/boringssl/blob/99bd1df99b2ada05877f36f85ff2f7f37e176fd6/ssl/ssl_lib.cc#L767
         // read additional messages
