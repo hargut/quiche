@@ -2,6 +2,7 @@ use crate::crypto::Algorithm;
 use crate::Error;
 use crate::Result;
 
+use rustls::quic::DirectionalKeys;
 use rustls::quic::HeaderProtectionKey;
 use rustls::quic::Keys;
 use rustls::quic::PacketKey as RustlsPacketKey;
@@ -74,6 +75,15 @@ pub struct Open {
 
 #[allow(unused_variables)]
 impl Open {
+    pub(crate) fn from(keys: DirectionalKeys) -> Self {
+        Self {
+            packet_key: keys.packet,
+            header_protection_key: Some(keys.header),
+            algorithm: Algorithm::AES128_GCM,
+            secrets: None,
+        }
+    }
+
     pub fn decrypt_hdr(
         &self, sample: &[u8], first: &mut u8, packet_number: &mut [u8],
     ) -> Result<()> {
@@ -133,6 +143,15 @@ pub struct Seal {
 #[allow(unused_variables)]
 impl Seal {
     pub const ENCRYPT: u32 = 1;
+
+    pub(crate) fn from(keys: DirectionalKeys) -> Self {
+        Self {
+            packet_key: keys.packet,
+            header_protection_key: Some(keys.header),
+            algorithm: Algorithm::AES128_GCM,
+            secrets: None,
+        }
+    }
 
     pub fn encrypt_hdr(
         &self, sample: &[u8], first: &mut u8, packet_number: &mut [u8],
@@ -250,7 +269,7 @@ pub fn derive_initial_key_material(
 
     let version = match version {
         1 => Version::V1,
-        _ => return Err(Error::CryptoFail),
+        _ => Version::V1,
     };
 
     let keys =

@@ -719,6 +719,7 @@ impl PathMap {
     ///
     /// [`Done`]: enum.Error.html#variant.Done
     pub fn insert_path(&mut self, path: Path, is_server: bool) -> Result<usize> {
+        error!("insert_path: {:?}", path);
         self.make_room_for_new_path()?;
 
         let local_addr = path.local_addr;

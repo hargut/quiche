@@ -4243,11 +4243,6 @@ mod tests {
     #[test]
     /// Client sends multiple HEADERS before data.
     fn data_after_trailers_client() {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
-
         let mut s = Session::new().unwrap();
         s.handshake().unwrap();
 

@@ -1,16 +1,23 @@
 use std::fs::DirEntry;
+use std::num::ParseIntError;
 use std::sync::Arc;
 
 use crate::crypto::init_crypto_provider;
 use crate::crypto::key_material_from_keys;
 use crate::crypto::Algorithm;
 use crate::crypto::Level;
+use crate::crypto::Open;
+use crate::crypto::Seal;
 use crate::packet;
 use crate::tls::ExData;
 use crate::ConnectionError;
+use crate::ConnectionId;
 use crate::Error;
 use crate::Result;
 use crate::TransportParams;
+use rustls::client::ClientSessionMemoryCache;
+use rustls::client::ClientSessionStore;
+use rustls::client::Resumption;
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::CertificateDer;
@@ -47,6 +54,7 @@ pub struct Context {
     enable_keylog: bool,
     enable_early_data: bool,
     quic_version: Version,
+    client_resumption_store: Arc<ClientSessionMemoryCache>,
 }
 
 // mod implementation
@@ -66,6 +74,7 @@ impl Context {
             enable_early_data: false,
             quic_version: Default::default(),
             alpns: vec![],
+            client_resumption_store: Arc::new(ClientSessionMemoryCache::new(256)),
         })
     }
 
@@ -118,11 +127,6 @@ impl Context {
                 config.key_log = Arc::new(KeyLogFile::new());
             }
             if self.enable_early_data {
-                // matching boringssl default
-                //
-                // kMaxEarlyDataAccepted is the advertised number of plaintext
-                // bytes of early data that will be accepted.
-
                 // INFO: rustls currently only allows 0 or 2^32-1
                 config.max_early_data_size = u32::MAX;
             }
@@ -189,6 +193,11 @@ impl Context {
             if self.alpns.len() > 0 {
                 config.alpn_protocols = self.alpns.clone();
             }
+            // required for 0-rtt, the resumption store is persisted within the
+            // Context and propagated to all connections on the
+            // ClientConfig
+            config.resumption =
+                Resumption::store(self.client_resumption_store.clone());
 
             self.client_config = Some(Arc::new(config))
         }
@@ -339,13 +348,11 @@ pub struct Handshake {
 
     side: Side,
     quic_transport_params: Option<Vec<u8>>,
-
+    hostname: Option<ServerName<'static>>,
     connection: Option<Connection>,
 
-    provided_data: Option<Vec<u8>>,
-
     highest_level: Level,
-    hostname: Option<ServerName<'static>>,
+    provided_data: Option<Vec<u8>>,
 }
 
 // mod implementation
@@ -371,7 +378,7 @@ impl Handshake {
             })?
             .to_owned();
 
-        self.hostname = Some(hostname.clone().to_owned());
+        self.hostname = Some(hostname);
         Ok(())
     }
 
@@ -383,6 +390,14 @@ impl Handshake {
     pub fn quic_transport_params(&self) -> &[u8] {
         // peer/remote transport parameters
         if let Some(conn) = &self.connection {
+            // when resuming a tls session returning the transport parameters
+            // leads to errors as during decoding they are checked
+            // against the new connection ids which are not yet
+            // fully established and the previous connection ids would be present
+            if self.is_in_early_data() {
+                return &[];
+            };
+
             return if let Some(params) = conn.quic_transport_parameters() {
                 params
             } else {
@@ -454,12 +469,13 @@ impl Handshake {
                         self.client_config.clone(),
                         self.quic_version.clone(),
                         hostname.to_owned(),
-                        params.clone(),
+                        params,
                     )
                     .map_err(|e| {
                         error!("failed to create client config {}", e);
                         Error::TlsFail
                     })?;
+
                     self.connection = Some(client_conn.into())
                 },
                 Side::Server => {
@@ -519,7 +535,32 @@ impl Handshake {
             self.write_crypto_stream(current_level, ex_data, buf.as_slice())?;
         }
 
-        let conn = self.connection.as_ref().unwrap();
+        let Some(conn) = self.connection.as_mut() else {
+            return Err(Error::TlsFail);
+        };
+
+        if let Some(zero_rtt_keys) = conn.zero_rtt_keys() {
+            let space = &mut ex_data.pkt_num_spaces[packet::Epoch::Application];
+            match self.side {
+                Side::Client => {
+                    if space.crypto_seal.is_some() {
+                        error!("client zero_rtt_keys are already present");
+                    };
+
+                    space.crypto_seal = Some(Seal::from(zero_rtt_keys));
+                },
+                Side::Server => {
+                    let space =
+                        &mut ex_data.pkt_num_spaces[packet::Epoch::Application];
+                    if space.crypto_0rtt_open.is_some() {
+                        error!("server zero_rtt_keys are already present");
+                    };
+
+                    space.crypto_0rtt_open = Some(Open::from(zero_rtt_keys));
+                },
+            }
+        }
+
         error!(
             "handshake: side={:?}, kind={:?}, ongoing={:?}, alpn={:?}",
             self.side,
@@ -532,6 +573,29 @@ impl Handshake {
                 },
             }
         );
+
+        // setting a session value to allow for tls resumption / zero-rtt
+        if matches!(self.side, Side::Client) &&
+            !conn.is_handshaking() &&
+            ex_data.session.is_none()
+        {
+            let mut session = Vec::new();
+
+            let local_params =
+                self.quic_transport_params.as_ref().unwrap().as_slice();
+            let local_params_len: [u8; 8] =
+                (local_params.len() as u64).to_be_bytes();
+            session.extend_from_slice(&local_params_len);
+            session.extend_from_slice(local_params);
+
+            let peer_params = self.quic_transport_params();
+            let peer_params_len: [u8; 8] =
+                (peer_params.len() as u64).to_be_bytes();
+            session.extend_from_slice(&peer_params_len);
+            session.extend_from_slice(peer_params);
+
+            *ex_data.session = Some(session);
+        }
 
         Ok(())
     }
@@ -607,21 +671,10 @@ impl Handshake {
         Ok(())
     }
 
-    pub fn process_post_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
-        // TODO: is noop sufficient for the whole function?
-        // If SSL_provide_quic_data hasn't been called since we last called
-        // SSL_process_quic_post_handshake, then there's nothing to do.
-        if !self.provided_data.is_none() {
-            return Ok(());
-        }
-
-        error!("process_post_handshake {:?}", self.side);
-
-        // https://github.com/google/boringssl/blob/99bd1df99b2ada05877f36f85ff2f7f37e176fd6/ssl/ssl_lib.cc#L767
-        // read additional messages
-        // check alerts
-        // check renegotiate
-        // check transport errors
+    pub fn process_post_handshake(
+        &mut self, _ex_data: &mut ExData,
+    ) -> Result<()> {
+        // no-op
         Ok(())
     }
 
@@ -673,7 +726,17 @@ impl Handshake {
 // mod implementation
 impl Handshake {
     pub fn set_session(&mut self, session: &[u8]) -> Result<()> {
-        todo!()
+        match self.side {
+            // peer transport parameters are part of the resumption_store
+            Side::Client => {
+                self.set_quic_transport_params(session)?;
+                Ok(())
+            },
+            Side::Server => {
+                error!("set session is a client only operation");
+                Err(Error::TlsFail)
+            },
+        }
     }
 
     pub fn curve(&self) -> Option<String> {
@@ -719,10 +782,6 @@ impl Handshake {
         let Some(conn) = &self.connection else {
             return false;
         };
-
-        match conn {
-            Connection::Client(c) => c.is_early_data_accepted(),
-            Connection::Server(s) => false,
-        }
+        conn.zero_rtt_keys().is_some()
     }
 }

@@ -2236,7 +2236,8 @@ impl Connection {
             self.peer_transport_params_track_unknown,
         )?;
 
-        self.process_peer_transport_params(peer_params)?;
+        self.process_peer_transport_params(peer_params.clone())?;
+        error!("set_session peer_params: {:?}", peer_params);
 
         Ok(())
     }
@@ -6866,7 +6867,6 @@ impl Connection {
         )?;
 
         self.handshake.set_quic_transport_params(raw_params)?;
-
         Ok(())
     }
 
@@ -8892,11 +8892,13 @@ pub mod testing {
             rand::rand_bytes(&mut client_scid[..]);
             let client_scid = ConnectionId::from_ref(&client_scid);
             let client_addr = Pipe::client_addr();
+            error!("client_scid: {:?}", client_scid);
 
             let mut server_scid = [0; 16];
             rand::rand_bytes(&mut server_scid[..]);
             let server_scid = ConnectionId::from_ref(&server_scid);
             let server_addr = Pipe::server_addr();
+            error!("server_scid: {:?}", server_scid);
 
             Ok(Pipe {
                 client: connect(
@@ -9750,6 +9752,11 @@ mod tests {
 
     #[test]
     fn invalid_initial_source_connection_id() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         let mut buf = [0; 65535];
 
         let mut pipe = testing::Pipe::new().unwrap();
@@ -10000,6 +10007,10 @@ mod tests {
         config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
+            .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -10061,6 +10072,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
@@ -10133,6 +10148,10 @@ mod tests {
             .unwrap();
         config
             .load_priv_key_from_pem_file("examples/cert.key")
+            .unwrap();
+        #[cfg(feature = "rustls")]
+        config
+            .load_verify_locations_from_file("examples/rootca.crt")
             .unwrap();
         config
             .set_application_protos(&[b"proto1", b"proto2"])
