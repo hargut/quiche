@@ -26,6 +26,8 @@ use rustls::pki_types::ServerName;
 use rustls::quic::ClientConnection;
 use rustls::quic::Connection;
 use rustls::quic::KeyChange;
+use rustls::quic::Keys;
+use rustls::quic::Secrets;
 use rustls::quic::ServerConnection;
 use rustls::quic::Version;
 use rustls::server::WebPkiClientVerifier;
@@ -215,6 +217,7 @@ impl Context {
             provided_data: None,
             highest_level: Level::Initial,
             hostname: None,
+            one_rtt_keys_secrets: None,
         })
     }
 
@@ -327,7 +330,7 @@ impl Context {
         Ok(())
     }
 
-    // TODO: remove method
+    #[cfg(not(feature = "rustls"))]
     pub fn set_ticket_key(&mut self, _key: &[u8]) -> Result<()> {
         // not supported in rustls
         Err(Error::TlsFail)
@@ -353,6 +356,7 @@ pub struct Handshake {
 
     highest_level: Level,
     provided_data: Option<Vec<u8>>,
+    one_rtt_keys_secrets: Option<(Keys, Secrets)>,
 }
 
 // mod implementation
@@ -528,11 +532,17 @@ impl Handshake {
                 level_upgraded = self.process_key_change(ex_data, key_change)?
             };
 
-            if buf.is_empty() && !level_upgraded {
-                break;
+            if !level_upgraded && self.one_rtt_keys_secrets.is_some() {
+                let keys_secrets = self.one_rtt_keys_secrets.take().unwrap();
+                level_upgraded =
+                    self.handle_application_keys(ex_data, keys_secrets)?
             }
 
-            self.write_crypto_stream(current_level, ex_data, buf.as_slice())?;
+            if buf.is_empty() {
+                break;
+            } else {
+                self.write_crypto_stream(current_level, ex_data, buf.as_slice())?;
+            }
         }
 
         let Some(conn) = self.connection.as_mut() else {
@@ -604,48 +614,62 @@ impl Handshake {
         &mut self, ex_data: &mut ExData, key_change: KeyChange,
     ) -> Result<bool> {
         match key_change {
-            KeyChange::Handshake { keys } => {
-                match self.highest_level {
-                    Level::Initial => {
-                        let next_space =
-                            &mut ex_data.pkt_num_spaces[packet::Epoch::Handshake];
+            KeyChange::Handshake { keys } => match self.highest_level {
+                Level::Initial => {
+                    let next_space =
+                        &mut ex_data.pkt_num_spaces[packet::Epoch::Handshake];
 
-                        if next_space.crypto_seal.is_some() ||
-                            next_space.crypto_open.is_some()
-                        {
-                            debug_assert!(
-                                false,
-                                "keys are already present for Handshake"
-                            );
-                        };
+                    if next_space.crypto_seal.is_some() ||
+                        next_space.crypto_open.is_some()
+                    {
+                        debug_assert!(
+                            false,
+                            "keys are already present for Handshake"
+                        );
+                    };
 
-                        self.highest_level = Level::Handshake;
-                        let (open, seal) = key_material_from_keys(keys, None)?;
-                        next_space.crypto_open = Some(open);
-                        next_space.crypto_seal = Some(seal);
+                    self.highest_level = Level::Handshake;
+                    let (open, seal) = key_material_from_keys(keys, None)?;
+                    next_space.crypto_open = Some(open);
+                    next_space.crypto_seal = Some(seal);
 
-                        self.highest_level = Level::Handshake;
-                        return Ok(true);
-                    },
-                    Level::ZeroRTT | Level::Handshake | Level::OneRTT => {
-                        assert!(false, "required to handle handshake keys")
-                    },
-                };
+                    self.highest_level = Level::Handshake;
+                    Ok(true)
+                },
+                Level::ZeroRTT | Level::Handshake | Level::OneRTT => {
+                    debug_assert!(false, "required to handle handshake keys");
+                    Ok(false)
+                },
             },
 
-            KeyChange::OneRtt { keys, next } => {
-                error!("level: {:?}", self.highest_level);
-                let next_space =
-                    &mut ex_data.pkt_num_spaces[packet::Epoch::Application];
-                let (open, seal) = key_material_from_keys(keys, Some(next))?;
-                next_space.crypto_open = Some(open);
-                next_space.crypto_seal = Some(seal);
-
-                self.highest_level = Level::OneRTT;
-            },
+            KeyChange::OneRtt { keys, next } =>
+                self.handle_application_keys(ex_data, (keys, next)),
         }
+    }
 
-        Ok(false)
+    fn handle_application_keys(
+        &mut self, ex_data: &mut ExData, keys_secrets: (Keys, Secrets),
+    ) -> Result<bool> {
+        self.highest_level = Level::OneRTT;
+
+        if !self.is_completed() {
+            // avoid accepts of 1 RTT data before handshake is finished
+            // temporarily storing keys/secrets in handshake
+            // populate in space once handshake is compeleted
+            self.one_rtt_keys_secrets = Some((keys_secrets.0, keys_secrets.1));
+
+            Ok(false)
+        } else {
+            let next_space =
+                &mut ex_data.pkt_num_spaces[packet::Epoch::Application];
+
+            let (open, seal) =
+                key_material_from_keys(keys_secrets.0, Some(keys_secrets.1))?;
+            next_space.crypto_open = Some(open);
+            next_space.crypto_seal = Some(seal);
+
+            Ok(true)
+        }
     }
 
     fn write_crypto_stream(

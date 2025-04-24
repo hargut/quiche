@@ -1013,6 +1013,7 @@ impl Config {
     /// specific key (e.g. in order to support resumption across multiple
     /// servers), in which case the application is also responsible for
     /// rotating the key to provide forward secrecy.
+    #[cfg(not(feature = "rustls"))]
     pub fn set_ticket_key(&mut self, key: &[u8]) -> Result<()> {
         self.tls_ctx.set_ticket_key(key)
     }
@@ -9752,11 +9753,6 @@ mod tests {
 
     #[test]
     fn invalid_initial_source_connection_id() {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
-
         let mut buf = [0; 65535];
 
         let mut pipe = testing::Pipe::new().unwrap();
@@ -9902,6 +9898,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "rustls"))]
     fn handshake_resumption() {
         #[cfg(not(feature = "openssl"))]
         const SESSION_TICKET_KEY: [u8; 48] = [0xa; 48];
@@ -11635,6 +11632,11 @@ mod tests {
     /// Simulates reception of an early 1-RTT packet on the server, by
     /// delaying the client's Handshake packet that completes the handshake.
     fn early_1rtt_packet() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         let mut buf = [0; 65535];
 
         let mut pipe = testing::Pipe::new().unwrap();
