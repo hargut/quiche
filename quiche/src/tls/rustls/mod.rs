@@ -684,6 +684,7 @@ impl Handshake {
             let next_space =
                 &mut ex_data.pkt_num_spaces[packet::Epoch::Application];
 
+            error!("passing by here {:?}", self.side);
             let (open, seal) =
                 key_material_from_keys(keys_secrets.0, Some(keys_secrets.1))?;
             next_space.crypto_open = Some(open);

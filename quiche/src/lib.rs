@@ -2920,10 +2920,12 @@ impl Connection {
                 aead = &key_update.crypto_open;
             } else {
                 trace!(
-                    "{} peer-initiated key update {} epoch {:?}",
+                    "{} peer-initiated key update {} epoch {:?} is_server {}, hdr: {:?}",
                     self.trace_id,
                     pn,
-                    epoch
+                    epoch,
+                    self.is_server,
+                    hdr
                 );
 
                 aead_next = Some((
@@ -2953,7 +2955,16 @@ impl Connection {
             aead,
         )
         .map_err(|e| {
-            error!("dropping pn: {}", pn);
+            error!("dropping pn: {}, aead_next: {:?}", pn, &aead_next.is_some());
+
+            #[cfg(feature = "rustls")]
+            {
+                if let Some((ref mut open, ref mut seal)) = aead_next {
+                    open.return_next_remote_key();
+                    seal.return_next_local_key();
+                }
+            }
+
             drop_pkt_on_err(e, self.recv_count, self.is_server, &self.trace_id)
         })?;
 
