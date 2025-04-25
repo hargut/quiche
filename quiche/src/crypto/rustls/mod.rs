@@ -75,7 +75,6 @@ pub struct Open {
 }
 
 pub struct SecretsNextKeys {
-    counter: usize,
     inner: Mutex<(
         Secrets,
         Option<Box<dyn RustlsPacketKey>>,
@@ -204,7 +203,7 @@ impl Open {
         })
     }
 
-    pub fn return_next_key(mut self) -> Result<()> {
+    pub fn return_next_key(self) -> Result<()> {
         let Some(secrets) = &self.secrets else {
             error!("no secrets present to return packet key");
             return Err(Error::CryptoFail);
@@ -293,7 +292,7 @@ impl Seal {
         })
     }
 
-    pub fn return_next_key(mut self) -> Result<()> {
+    pub fn return_next_key(self) -> Result<()> {
         let Some(secrets) = &self.secrets else {
             error!("no secrets present to return packet key");
             return Err(Error::CryptoFail);
@@ -311,7 +310,6 @@ pub(crate) fn key_material_from_keys(
         error!("creating key material from keys with secrets: offset {}", offset);
 
         Some(Arc::new(SecretsNextKeys {
-            counter: 0,
             inner: Mutex::new((next, None, None, offset))
         }))
     } else {

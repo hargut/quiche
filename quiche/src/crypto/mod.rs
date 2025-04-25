@@ -66,12 +66,4 @@ impl Algorithm {
             Algorithm::ChaCha20_Poly1305 => 16,
         }
     }
-
-    pub const fn nonce_len(self) -> usize {
-        match self {
-            Algorithm::AES128_GCM => 12,
-            Algorithm::AES256_GCM => 12,
-            Algorithm::ChaCha20_Poly1305 => 12,
-        }
-    }
 }

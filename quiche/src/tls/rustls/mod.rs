@@ -1,5 +1,4 @@
 use std::fs::DirEntry;
-use std::num::ParseIntError;
 use std::sync::Arc;
 
 use crate::crypto::init_crypto_provider;
@@ -11,12 +10,9 @@ use crate::crypto::Seal;
 use crate::packet;
 use crate::tls::ExData;
 use crate::ConnectionError;
-use crate::ConnectionId;
 use crate::Error;
 use crate::Result;
-use crate::TransportParams;
 use rustls::client::ClientSessionMemoryCache;
-use rustls::client::ClientSessionStore;
 use rustls::client::Resumption;
 use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::pem::PemObject;
@@ -550,13 +546,12 @@ impl Handshake {
 
             let mut level_upgraded = false;
             if let Some(key_change) = key_change.take() {
-                level_upgraded = self.process_key_change(ex_data, key_change)?
-            };
+                level_upgraded = self.process_key_change(ex_data, key_change)?;
+            }
 
             if !level_upgraded && self.one_rtt_keys_secrets.is_some() {
                 let keys_secrets = self.one_rtt_keys_secrets.take().unwrap();
-                level_upgraded =
-                    self.handle_application_keys(ex_data, keys_secrets)?
+                self.handle_application_keys(ex_data, keys_secrets)?;
             }
 
             if buf.is_empty() {

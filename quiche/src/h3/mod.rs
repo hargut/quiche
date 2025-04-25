@@ -3411,10 +3411,6 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::EnvFilter;
-
     use super::testing::*;
 
     #[test]

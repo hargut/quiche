@@ -39,6 +39,14 @@ pub const HP_MASK_LEN: usize = 5;
 // Note: some vendor-specific methods are implemented by each vendor's submodule
 // (openssl-quictls / boringssl).
 impl Algorithm {
+    pub const fn nonce_len(self) -> usize {
+        match self {
+            Algorithm::AES128_GCM => 12,
+            Algorithm::AES256_GCM => 12,
+            Algorithm::ChaCha20_Poly1305 => 12,
+        }
+    }
+
     fn get_evp_digest(self) -> *const EVP_MD {
         match self {
             Algorithm::AES128_GCM => unsafe { EVP_sha256() },
