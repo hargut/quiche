@@ -11,6 +11,7 @@ use rustls::quic::Version;
 use rustls::CipherSuite;
 use rustls::Side;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 // TODO:
 //#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
@@ -68,9 +69,26 @@ impl PacketKey {
 
 pub struct Open {
     packet_key: Box<dyn RustlsPacketKey>,
-    header_protection_key: Option<Box<dyn HeaderProtectionKey>>,
+    header_protection_key: Arc<dyn HeaderProtectionKey>,
     algorithm: Algorithm,
-    secrets: Option<Secrets>,
+    secrets: Option<Arc<Mutex<SecretsNextKeys>>>,
+}
+
+pub struct SecretsNextKeys {
+    counter: usize,
+    secrets: Secrets,
+    next_remote: Option<Box<dyn RustlsPacketKey>>,
+    next_local: Option<Box<dyn RustlsPacketKey>>,
+}
+
+impl SecretsNextKeys {
+    fn next_packet_keys(&mut self) {
+        let next_packet_keys = self.secrets.next_packet_keys();
+        self.next_local = Some(next_packet_keys.local);
+        self.next_remote = Some(next_packet_keys.remote);
+        self.counter = self.counter + 1;
+        error!("generated next packet keys: {}", self.counter)
+    }
 }
 
 #[allow(unused_variables)]
@@ -78,7 +96,7 @@ impl Open {
     pub(crate) fn from(keys: DirectionalKeys) -> Self {
         Self {
             packet_key: keys.packet,
-            header_protection_key: Some(keys.header),
+            header_protection_key: Arc::from(keys.header),
             algorithm: Algorithm::AES128_GCM,
             secrets: None,
         }
@@ -87,12 +105,8 @@ impl Open {
     pub fn decrypt_hdr(
         &self, sample: &[u8], first: &mut u8, packet_number: &mut [u8],
     ) -> Result<()> {
-        let Some(hpk) = &self.header_protection_key else {
-            error!("header protection key not available");
-            return Err(Error::CryptoFail);
-        };
-
-        hpk.decrypt_in_place(sample, first, packet_number)
+        self.header_protection_key
+            .decrypt_in_place(sample, first, packet_number)
             .map_err(|e| {
                 error!("failed to decrypt packet header: {:?}", e);
                 Error::CryptoFail
@@ -123,10 +137,28 @@ impl Open {
             return Err(Error::CryptoFail);
         };
 
-        let pkt_keys = secrets.next_packet_keys();
+        let remote_key = {
+            let mut secrets = secrets.lock().map_err(|e| {
+                error!("failed to acquire mutex: {:?}", e);
+                Error::CryptoFail
+            })?;
+            if secrets.next_remote.is_some() {
+                error!("consumed next_remote: {}", secrets.counter);
+                secrets.next_remote.take().unwrap()
+            } else {
+                if secrets.next_local.is_some() {
+                    error!("local packet key was not consumed");
+                    return Err(Error::CryptoFail);
+                }
+                secrets.next_packet_keys();
+                error!("consumed next_remote: {}", secrets.counter);
+                secrets.next_remote.take().unwrap()
+            }
+        };
+
         Ok(Open {
-            packet_key: pkt_keys.local,
-            header_protection_key: None,
+            packet_key: remote_key,
+            header_protection_key: self.header_protection_key.clone(),
             algorithm: Algorithm::AES128_GCM,
             secrets: Some(secrets.clone()),
         })
@@ -135,9 +167,9 @@ impl Open {
 
 pub struct Seal {
     packet_key: Box<dyn RustlsPacketKey>,
-    header_protection_key: Option<Box<dyn HeaderProtectionKey>>,
+    header_protection_key: Arc<dyn HeaderProtectionKey>,
     algorithm: Algorithm,
-    secrets: Option<Secrets>,
+    secrets: Option<Arc<Mutex<SecretsNextKeys>>>,
 }
 
 #[allow(unused_variables)]
@@ -147,7 +179,7 @@ impl Seal {
     pub(crate) fn from(keys: DirectionalKeys) -> Self {
         Self {
             packet_key: keys.packet,
-            header_protection_key: Some(keys.header),
+            header_protection_key: Arc::from(keys.header),
             algorithm: Algorithm::AES128_GCM,
             secrets: None,
         }
@@ -156,12 +188,8 @@ impl Seal {
     pub fn encrypt_hdr(
         &self, sample: &[u8], first: &mut u8, packet_number: &mut [u8],
     ) -> Result<()> {
-        let Some(hpk) = &self.header_protection_key else {
-            error!("header protection key not available");
-            return Err(Error::CryptoFail);
-        };
-
-        hpk.encrypt_in_place(sample, first, packet_number)
+        self.header_protection_key
+            .encrypt_in_place(sample, first, packet_number)
             .map_err(|e| {
                 error!("failed to encrypt packet header: {:?}", e);
                 Error::CryptoFail
@@ -204,10 +232,28 @@ impl Seal {
             return Err(Error::CryptoFail);
         };
 
-        let pkt_keys = secrets.next_packet_keys();
+        let local_key = {
+            let mut secrets = secrets.lock().map_err(|e| {
+                error!("failed to acquire mutex: {:?}", e);
+                Error::CryptoFail
+            })?;
+            if secrets.next_local.is_some() {
+                error!("consumed next_local: {}", secrets.counter);
+                secrets.next_local.take().unwrap()
+            } else {
+                if secrets.next_remote.is_some() {
+                    error!("remote packet key was not consumed");
+                    return Err(Error::CryptoFail);
+                }
+                secrets.next_packet_keys();
+                error!("consumed next_local: {}", secrets.counter);
+                secrets.next_local.take().unwrap()
+            }
+        };
+
         Ok(Seal {
-            packet_key: pkt_keys.local,
-            header_protection_key: None,
+            packet_key: local_key,
+            header_protection_key: self.header_protection_key.clone(),
             algorithm: Algorithm::AES128_GCM,
             secrets: Some(secrets.clone()),
         })
@@ -217,17 +263,28 @@ impl Seal {
 pub(crate) fn key_material_from_keys(
     keys: Keys, next: Option<Secrets>,
 ) -> Result<(Open, Seal)> {
+    let next_secrets = if let Some(next) = next {
+        Some(Arc::new(Mutex::new(SecretsNextKeys {
+            counter: 0,
+            secrets: next,
+            next_remote: None,
+            next_local: None,
+        })))
+    } else {
+        None
+    };
+
     let open = Open {
         packet_key: keys.remote.packet,
-        header_protection_key: Some(keys.remote.header),
+        header_protection_key: Arc::from(keys.remote.header),
         algorithm: Algorithm::AES128_GCM,
-        secrets: next.clone(),
+        secrets: next_secrets.clone(),
     };
     let seal = Seal {
         packet_key: keys.local.packet,
-        header_protection_key: Some(keys.local.header),
+        header_protection_key: Arc::from(keys.local.header),
         algorithm: Algorithm::AES128_GCM,
-        secrets: next,
+        secrets: next_secrets,
     };
 
     Ok((open, seal))
@@ -277,13 +334,13 @@ pub fn derive_initial_key_material(
 
     let open = Open {
         packet_key: keys.remote.packet,
-        header_protection_key: Some(keys.remote.header),
+        header_protection_key: Arc::from(keys.remote.header),
         algorithm: Algorithm::AES128_GCM,
         secrets: None,
     };
     let seal = Seal {
         packet_key: keys.local.packet,
-        header_protection_key: Some(keys.local.header),
+        header_protection_key: Arc::from(keys.local.header),
         algorithm: Algorithm::AES128_GCM,
         secrets: None,
     };

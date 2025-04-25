@@ -51,6 +51,7 @@ pub struct Context {
     private_key_server: Option<PrivateKeyDer<'static>>,
     ca_certificates: Option<Vec<CertificateDer<'static>>>,
     verify_ca_certificates_store: Option<RootCertStore>,
+    system_default_cert_store: Option<RootCertStore>,
     alpns: Vec<Vec<u8>>,
     enable_verify_ca_certificates: bool,
     enable_keylog: bool,
@@ -72,6 +73,7 @@ impl Context {
             ca_certificates: None,
             enable_verify_ca_certificates: false,
             verify_ca_certificates_store: None,
+            system_default_cert_store: None,
             enable_keylog: false,
             enable_early_data: false,
             quic_version: Default::default(),
@@ -82,13 +84,17 @@ impl Context {
 
     pub fn new_handshake(&mut self) -> Result<Handshake> {
         let verify_store = if self.enable_verify_ca_certificates {
-            let Some(verify_store) = self.verify_ca_certificates_store.take()
-            else {
+            if let Some(verify_store) =
+                self.verify_ca_certificates_store.clone().take()
+            {
+                Some(verify_store)
+            } else {
                 // enabled but no store available
                 error!("verify_store: enabled but no store available");
-                return Err(Error::TlsFail);
-            };
-            Some(Arc::new(verify_store))
+                // return Err(Error::TlsFail);
+                // Some(Arc::new(RootCertStore::empty()))
+                Some(self.load_system_default_certificate_store())
+            }
         } else {
             None
         };
@@ -99,12 +105,14 @@ impl Context {
         {
             let builder = ServerConfig::builder_with_protocol_versions(&[&TLS13]);
             let builder = if let Some(verify_store) = verify_store.clone() {
-                let client_verifier = WebPkiClientVerifier::builder(verify_store)
-                    .build()
-                    .map_err(|_| {
-                        error!("client_verifier: failed to build");
-                        Error::TlsFail
-                    })?;
+                let client_verifier =
+                    WebPkiClientVerifier::builder(verify_store.into())
+                        .allow_unauthenticated()
+                        .build()
+                        .map_err(|e| {
+                            error!("client_verifier: failed to build {}", e);
+                            Error::TlsFail
+                        })?;
 
                 builder.with_client_cert_verifier(client_verifier)
             } else {
@@ -143,33 +151,30 @@ impl Context {
         if self.client_config.is_none() {
             let builder = ClientConfig::builder_with_protocol_versions(&[&TLS13]);
             let builder = if let Some(verify_store) = verify_store.clone() {
-                let server_verifier = WebPkiServerVerifier::builder(verify_store)
-                    .build()
-                    .map_err(|e| {
-                        error!("failed to build server verifier: {}", e);
-                        Error::TlsFail
-                    })?;
+                let server_verifier =
+                    WebPkiServerVerifier::builder(verify_store.into())
+                        .build()
+                        .map_err(|e| {
+                            error!("failed to build server verifier: {}", e);
+                            Error::TlsFail
+                        })?;
 
                 builder.with_webpki_verifier(server_verifier)
             } else {
-                // default to env variables or system store
-                // this behaviour differs as no-verification on client side is not
-                // intended on rustls
-                let certificates_result =
-                    rustls_native_certs::load_native_certs();
                 // FIXME: check how this is handled in quiche, and build the same
                 // pattern this is quick fix to successfully
                 // validate certificates issued by openssl
                 // likely not the same behaviour als quiche
-                let mut store = if let Some(store) =
+                let store = if let Some(store) =
                     self.verify_ca_certificates_store.take()
                 {
                     store
                 } else {
-                    RootCertStore::empty()
+                    // default to env variables or system store
+                    // this behaviour differs as no-verification on client side is
+                    // not intended on rustls
+                    self.load_system_default_certificate_store()
                 };
-
-                store.add_parsable_certificates(certificates_result.certs);
 
                 builder.with_root_certificates(store)
             };
@@ -219,6 +224,22 @@ impl Context {
             hostname: None,
             one_rtt_keys_secrets: None,
         })
+    }
+
+    fn load_system_default_certificate_store(&mut self) -> RootCertStore {
+        // loading the files is an expensive operation, ensure it's only done once
+        // system default cert store is used in some areas
+        if let Some(store) = &self.system_default_cert_store {
+            return store.clone();
+        };
+
+        let mut system_default_certificate_store = RootCertStore::empty();
+        let certificates_result = rustls_native_certs::load_native_certs();
+        system_default_certificate_store
+            .add_parsable_certificates(certificates_result.certs);
+
+        self.system_default_cert_store = Some(system_default_certificate_store);
+        self.system_default_cert_store.clone().unwrap()
     }
 
     pub fn load_verify_locations_from_file(&mut self, file: &str) -> Result<()> {
@@ -444,7 +465,7 @@ impl Handshake {
         };
 
         conn.read_hs(&mut buf.to_vec()).map_err(|e| {
-            error!("failed to read handshake data: {:?}", e);
+            error!("failed to read handshake data: {:?} {:?}", e, self.side);
             Error::TlsFail
         })?;
 

@@ -2919,7 +2919,12 @@ impl Connection {
             {
                 aead = &key_update.crypto_open;
             } else {
-                trace!("{} peer-initiated key update", self.trace_id);
+                trace!(
+                    "{} peer-initiated key update {} epoch {:?}",
+                    self.trace_id,
+                    pn,
+                    epoch
+                );
 
                 aead_next = Some((
                     self.pkt_num_spaces[epoch]
@@ -2948,6 +2953,7 @@ impl Connection {
             aead,
         )
         .map_err(|e| {
+            error!("dropping pn: {}", pn);
             drop_pkt_on_err(e, self.recv_count, self.is_server, &self.trace_id)
         })?;
 
@@ -2983,7 +2989,7 @@ impl Connection {
                 return Err(Error::KeyUpdate);
             }
 
-            trace!("{} key update verified", self.trace_id);
+            trace!("{} key update verified {}", self.trace_id, pn);
 
             let _ = self.pkt_num_spaces[epoch].crypto_seal.replace(seal_next);
 
@@ -9668,10 +9674,6 @@ mod tests {
         client_config
             .load_priv_key_from_pem_file("examples/cert.key")
             .unwrap();
-        #[cfg(feature = "rustls")]
-        client_config
-            .load_verify_locations_from_file("examples/rootca.crt")
-            .unwrap();
         client_config
             .set_application_protos(&[b"proto1", b"proto2"])
             .unwrap();
@@ -9694,8 +9696,12 @@ mod tests {
         .unwrap();
         assert_eq!(pipe.handshake(), Err(Error::TlsFail));
 
+        #[cfg(not(feature = "rustls"))]
         // Client did send a certificate.
         assert!(pipe.server.peer_cert().is_some());
+        #[cfg(feature = "rustls")]
+        // Rustls does not provide the peer certificate when verification failed
+        assert!(pipe.server.peer_cert().is_none());
     }
 
     #[test]
@@ -10491,6 +10497,11 @@ mod tests {
 
     #[test]
     fn update_key_request() {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().pretty())
+            .with(EnvFilter::from_default_env())
+            .init();
+
         let mut b = [0; 15];
 
         let mut pipe = testing::Pipe::new().unwrap();
@@ -11632,11 +11643,6 @@ mod tests {
     /// Simulates reception of an early 1-RTT packet on the server, by
     /// delaying the client's Handshake packet that completes the handshake.
     fn early_1rtt_packet() {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().pretty())
-            .with(EnvFilter::from_default_env())
-            .init();
-
         let mut buf = [0; 65535];
 
         let mut pipe = testing::Pipe::new().unwrap();
