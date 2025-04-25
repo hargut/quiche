@@ -2965,13 +2965,14 @@ impl Connection {
             Err(e) => {
                 #[cfg(feature = "rustls")]
                 // rustls updates the secrets when deriving the next packet keys
-                // therefore needed to return the keys in case they are not verified successfully
+                // therefore needed to return the keys in case they are not
+                // verified successfully
                 if let Some((open, seal)) = aead_next {
                     let _ = open.return_next_key();
                     let _ = seal.return_next_key();
                 }
-                return Err(e)
-            }
+                return Err(e);
+            },
         };
 
         if self.pkt_num_spaces[epoch].recv_pkt_num.contains(pn) {

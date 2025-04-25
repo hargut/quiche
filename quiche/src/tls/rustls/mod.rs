@@ -576,8 +576,6 @@ impl Handshake {
                     space.crypto_seal = Some(Seal::from(zero_rtt_keys));
                 },
                 Side::Server => {
-                    let space =
-                        &mut ex_data.pkt_num_spaces[packet::Epoch::Application];
                     if space.crypto_0rtt_open.is_some() {
                         error!("server zero_rtt_keys are already present");
                     };
@@ -585,6 +583,7 @@ impl Handshake {
                     space.crypto_0rtt_open = Some(Open::from(zero_rtt_keys));
                 },
             }
+            self.highest_level = Level::ZeroRTT;
         }
 
         error!(

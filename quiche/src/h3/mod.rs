@@ -3410,8 +3410,8 @@ pub mod testing {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::testing::*;
+    use super::*;
 
     #[test]
     /// Make sure that random GREASE values is within the specified limit.

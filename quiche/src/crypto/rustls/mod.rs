@@ -1,5 +1,5 @@
 use crate::crypto::Algorithm;
-use crate::{rand, Error};
+use crate::Error;
 use crate::Result;
 
 use rustls::quic::DirectionalKeys;
@@ -12,6 +12,7 @@ use rustls::CipherSuite;
 use rustls::Side;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::MutexGuard;
 
 // TODO:
 //#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
@@ -74,77 +75,6 @@ pub struct Open {
     secrets: Option<Arc<SecretsNextKeys>>,
 }
 
-pub struct SecretsNextKeys {
-    inner: Mutex<(
-        Secrets,
-        Option<Box<dyn RustlsPacketKey>>,
-        Option<Box<dyn RustlsPacketKey>>,
-        usize
-    )>,
-}
-
-impl SecretsNextKeys {
-    fn next_local_key(&self) -> Result<Option<Box<dyn RustlsPacketKey>>> {
-        let mut inner =
-            self.inner.lock().map_err(|e| {
-                error!("failed to acquire mutex: {:?}", e);
-                Error::CryptoFail
-            })?;
-
-        if inner.1.is_none() && inner.2.is_none() {
-            let keys = inner.0.next_packet_keys();
-            inner.1 = Some(keys.local);
-            inner.2 = Some(keys.remote);
-            inner.3 = inner.3 + 1;
-        };
-
-        error!("consumed local key {}", inner.3);
-        Ok(inner.1.take())
-    }
-
-    fn next_remote_key(&self) -> Result<Option<Box<dyn RustlsPacketKey>>> {
-        let mut inner =
-            self.inner.lock().map_err(|e| {
-                error!("failed to acquire mutex: {:?}", e);
-                Error::CryptoFail
-            })?;
-
-        if inner.1.is_none() && inner.2.is_none() {
-            let keys = inner.0.next_packet_keys();
-            inner.1 = Some(keys.local);
-            inner.2 = Some(keys.remote);
-            inner.3 = inner.3 + 1;
-        };
-
-        error!("consumed remote key {}", inner.3);
-        Ok(inner.2.take())
-    }
-
-    fn return_next_remote_key(&self, remote_key: Box<dyn RustlsPacketKey>) -> Result<()> {
-        let mut inner =
-            self.inner.lock().map_err(|e| {
-                error!("failed to acquire mutex: {:?}", e);
-                Error::CryptoFail
-            })?;
-
-        inner.2 = Some(remote_key);
-        error!("returned remote key {}", inner.3);
-        Ok(())
-    }
-
-    fn return_next_local_key(&self, local_key: Box<dyn RustlsPacketKey>) -> Result<()> {
-        let mut inner =
-            self.inner.lock().map_err(|e| {
-                error!("failed to acquire mutex: {:?}", e);
-                Error::CryptoFail
-            })?;
-
-        inner.1 = Some(local_key);
-        error!("returned local key {}", inner.3);
-        Ok(())
-    }
-}
-
 #[allow(unused_variables)]
 impl Open {
     pub(crate) fn from(keys: DirectionalKeys) -> Self {
@@ -170,7 +100,8 @@ impl Open {
     pub fn open_with_u64_counter(
         &self, packet_number: u64, header: &[u8], payload: &mut [u8],
     ) -> Result<usize> {
-        let decrypted = self.packet_key
+        let decrypted = self
+            .packet_key
             .decrypt_in_place(packet_number, header, payload)
             .map_err(|e| {
                 error!("failed to decrypt packet: {:?}", e);
@@ -184,8 +115,8 @@ impl Open {
         self.algorithm
     }
 
-    pub fn derive_next_packet_key(&mut self) -> Result<Open> {
-        let Some(secrets) = &mut self.secrets else {
+    pub fn derive_next_packet_key(&self) -> Result<Open> {
+        let Some(secrets) = &self.secrets else {
             error!("no secrets present for next packet key");
             return Err(Error::CryptoFail);
         };
@@ -214,7 +145,7 @@ impl Open {
 }
 
 pub struct Seal {
-    packet_key:Box<dyn RustlsPacketKey>,
+    packet_key: Box<dyn RustlsPacketKey>,
     header_protection_key: Arc<dyn HeaderProtectionKey>,
     algorithm: Algorithm,
     secrets: Option<Arc<SecretsNextKeys>>,
@@ -253,7 +184,8 @@ impl Seal {
             return Err(Error::CryptoFail);
         }
 
-        let tag = self.packet_key
+        let tag = self
+            .packet_key
             .encrypt_in_place(counter, ad, &mut buf[..in_len])
             .map_err(|e| {
                 error!("failed to encrypt packet: {:?}", e);
@@ -273,8 +205,8 @@ impl Seal {
         self.algorithm
     }
 
-    pub fn derive_next_packet_key(&mut self) -> Result<Seal> {
-        let Some(secrets) = &mut self.secrets else {
+    pub fn derive_next_packet_key(&self) -> Result<Seal> {
+        let Some(secrets) = &self.secrets else {
             error!("no secrets present for next packet key");
             return Err(Error::CryptoFail);
         };
@@ -302,16 +234,84 @@ impl Seal {
     }
 }
 
+pub struct SecretsNextKeys {
+    inner: Mutex<SecretsNextKeysInner>,
+}
+
+impl SecretsNextKeys {
+    fn from(next_secrets: Secrets) -> Self {
+        Self {
+            inner: Mutex::new(SecretsNextKeysInner {
+                secrets: next_secrets,
+                local_key: None,
+                remote_key: None,
+            }),
+        }
+    }
+
+    fn lock(&self) -> Result<MutexGuard<SecretsNextKeysInner>> {
+        self.inner.lock().map_err(|e| {
+            error!("failed to acquire mutex: {:?}", e);
+            Error::CryptoFail
+        })
+    }
+
+    fn next_local_key(&self) -> Result<Option<Box<dyn RustlsPacketKey>>> {
+        let mut me = self.lock()?;
+        me.maybe_update_keys();
+        error!("consumed local key");
+        Ok(me.local_key.take())
+    }
+
+    fn next_remote_key(&self) -> Result<Option<Box<dyn RustlsPacketKey>>> {
+        let mut me = self.lock()?;
+        me.maybe_update_keys();
+        error!("consumed remote key");
+        Ok(me.remote_key.take())
+    }
+
+    fn return_next_local_key(
+        &self, local_key: Box<dyn RustlsPacketKey>,
+    ) -> Result<()> {
+        let mut me = self.lock()?;
+        me.local_key = Some(local_key);
+        error!("returned local key");
+        Ok(())
+    }
+
+    fn return_next_remote_key(
+        &self, remote_key: Box<dyn RustlsPacketKey>,
+    ) -> Result<()> {
+        let mut me = self.lock()?;
+        me.remote_key = Some(remote_key);
+        error!("returned remote key");
+        Ok(())
+    }
+}
+
+pub struct SecretsNextKeysInner {
+    secrets: Secrets,
+    local_key: Option<Box<dyn RustlsPacketKey>>,
+    remote_key: Option<Box<dyn RustlsPacketKey>>,
+}
+
+impl SecretsNextKeysInner {
+    fn maybe_update_keys(&mut self) {
+        if self.local_key.is_none() && self.remote_key.is_none() {
+            let keys = self.secrets.next_packet_keys();
+            self.local_key = Some(keys.local);
+            self.remote_key = Some(keys.remote);
+        };
+    }
+}
+
 pub(crate) fn key_material_from_keys(
     keys: Keys, next: Option<Secrets>,
 ) -> Result<(Open, Seal)> {
     let next_secrets = if let Some(next) = next {
-        let offset = rand::rand_u64() as usize;
-        error!("creating key material from keys with secrets: offset {}", offset);
+        error!("creating key material from keys with secrets");
 
-        Some(Arc::new(SecretsNextKeys {
-            inner: Mutex::new((next, None, None, offset))
-        }))
+        Some(Arc::new(SecretsNextKeys::from(next)))
     } else {
         None
     };
@@ -333,10 +333,7 @@ pub(crate) fn key_material_from_keys(
 }
 
 pub fn derive_initial_key_material(
-    cid: &[u8],
-    version: u32,
-    is_server: bool,
-    did_reset: bool, // TODO: check & respect effects of did_reset
+    cid: &[u8], version: u32, is_server: bool, _did_reset: bool,
 ) -> Result<(Open, Seal)> {
     let provider = init_crypto_provider();
 
