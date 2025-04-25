@@ -2947,7 +2947,7 @@ impl Connection {
             }
         }
 
-        let mut payload = packet::decrypt_pkt(
+        let mut payload_res = packet::decrypt_pkt(
             &mut b,
             pn,
             pn_len,
@@ -2955,18 +2955,22 @@ impl Connection {
             aead,
         )
         .map_err(|e| {
-            error!("dropping pn: {}, aead_next: {:?}", pn, &aead_next.is_some());
-
-            #[cfg(feature = "rustls")]
-            {
-                if let Some((ref mut open, ref mut seal)) = aead_next {
-                    open.return_next_remote_key();
-                    seal.return_next_local_key();
-                }
-            }
-
             drop_pkt_on_err(e, self.recv_count, self.is_server, &self.trace_id)
-        })?;
+        });
+
+        let mut payload = match payload_res {
+            Ok(payload) => payload,
+            Err(e) => {
+                #[cfg(feature = "rustls")]
+                // rustls updates the secrets when deriving the next packet keys
+                // therefore needed to return the keys in case they are not verified successfully
+                if let Some((mut open, mut seal)) = aead_next {
+                    let _ = open.return_next_key();
+                    let _ = seal.return_next_key();
+                }
+                return Err(e)
+            }
+        };
 
         if self.pkt_num_spaces[epoch].recv_pkt_num.contains(pn) {
             trace!("{} ignored duplicate packet {}", self.trace_id, pn);
