@@ -28,7 +28,7 @@ include = [
 ]
 
 [features]
-default = ["rustls"]
+default = []
 
 # Build the vendored BoringSSL library.
 boringssl-vendored = []
