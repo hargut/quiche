@@ -574,9 +574,7 @@ pub fn decrypt_hdr(
     };
 
     let mut pn_and_sample = b.peek_bytes_mut(MAX_PKT_NUM_LEN + SAMPLE_LEN)?;
-
     let (mut ciphertext, sample) = pn_and_sample.split_at(MAX_PKT_NUM_LEN)?;
-
     let ciphertext = ciphertext.as_mut();
 
     let mask = aead.new_mask(sample.as_ref())?;
