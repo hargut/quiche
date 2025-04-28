@@ -309,7 +309,7 @@ pub(crate) fn key_material_from_keys(
     keys: Keys, next: Option<Secrets>,
 ) -> Result<(Open, Seal)> {
     let next_secrets = if let Some(next) = next {
-        error!("creating key material from keys with secrets");
+        debug!("creating key material from keys with secrets");
 
         Some(Arc::new(SecretsNextKeys::from(next)))
     } else {

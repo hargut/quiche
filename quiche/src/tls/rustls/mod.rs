@@ -285,7 +285,7 @@ impl Context {
         let certificates: Result<Vec<CertificateDer>> =
             CertificateDer::pem_file_iter(file)
                 .map_err(|e| {
-                    println!(
+                    error!(
                         "failed to load ca certificates from pem file: {}",
                         e
                     );
@@ -449,13 +449,13 @@ impl Handshake {
 
     // peer/receive Crypto frame data
     pub fn provide_data(&mut self, _level: Level, buf: &[u8]) -> Result<()> {
-        error!(
+        debug!(
             "provide_data: side: {:?}, level: {:?}",
             self.side, self.highest_level
         );
 
         let Some(conn) = &mut self.connection else {
-            error!("no connection present {:?}", self.side);
+            debug!("no connection present {:?}", self.side);
             self.provided_data = Some(buf.to_vec());
             return Ok(());
         };
@@ -471,7 +471,7 @@ impl Handshake {
     // local/send Crypto frame data
     pub fn do_handshake(&mut self, ex_data: &mut ExData) -> Result<()> {
         if self.connection.is_none() {
-            error!("no connection present {:?}", self.side);
+            debug!("no connection present {:?}", self.side);
 
             let Some(params) = self.quic_transport_params.clone() else {
                 error!("missing transport parameters {:?}", self.side);
@@ -586,7 +586,7 @@ impl Handshake {
             self.highest_level = Level::ZeroRTT;
         }
 
-        error!(
+        debug!(
             "handshake: side={:?}, kind={:?}, ongoing={:?}, alpn={:?}",
             self.side,
             conn.handshake_kind(),
@@ -678,7 +678,6 @@ impl Handshake {
             let next_space =
                 &mut ex_data.pkt_num_spaces[packet::Epoch::Application];
 
-            error!("passing by here {:?}", self.side);
             let (open, seal) =
                 key_material_from_keys(keys_secrets.0, Some(keys_secrets.1))?;
             next_space.crypto_open = Some(open);
@@ -702,7 +701,7 @@ impl Handshake {
 
         pkt_num_space.crypto_stream.send.write(data, false)?;
 
-        error!(
+        debug!(
             "handshake: side={:?}, level={:?}, sent={}",
             self.side,
             self.highest_level,

@@ -7063,7 +7063,7 @@ impl Connection {
         };
 
         self.handshake_completed = self.handshake.is_completed();
-        error!(
+        debug!(
             "is_server: {}, handshake_completed: {}",
             self.is_server, self.handshake_completed
         );
