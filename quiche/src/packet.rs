@@ -577,7 +577,7 @@ pub fn decrypt_hdr(
     let (mut ciphertext, sample) = pn_and_sample.split_at(MAX_PKT_NUM_LEN)?;
     let ciphertext = ciphertext.as_mut();
 
-    #[cfg(not(feature = "rustls"))]
+    #[cfg(not(feature = "__rustls"))]
     let pn_len = {
         let mask = aead.new_mask(sample.as_ref())?;
 
@@ -598,7 +598,7 @@ pub fn decrypt_hdr(
         pn_len
     };
 
-    #[cfg(feature = "rustls")]
+    #[cfg(feature = "__rustls")]
     let pn_len = {
         aead.decrypt_hdr(sample.as_ref(), &mut first, ciphertext)?;
         usize::from((first & PKT_NUM_MASK) + 1)
@@ -683,7 +683,7 @@ pub fn encrypt_hdr(
 
     let pn_buf = rest.slice_last(pn_len)?;
 
-    #[cfg(not(feature = "rustls"))]
+    #[cfg(not(feature = "__rustls"))]
     {
         let mask = aead.new_mask(sample)?;
 
@@ -698,7 +698,7 @@ pub fn encrypt_hdr(
         }
     }
 
-    #[cfg(feature = "rustls")]
+    #[cfg(feature = "__rustls")]
     aead.encrypt_hdr(sample, &mut first[0], pn_buf)?;
 
     Ok(())
@@ -1543,7 +1543,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "rustls"))]
+    #[cfg(not(feature = "__rustls"))]
     fn decrypt_chacha20() {
         let secret = [
             0x9a, 0xc3, 0x12, 0xa7, 0xf8, 0x77, 0x46, 0x8e, 0xbe, 0x69, 0x42,
@@ -1906,7 +1906,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "rustls"))]
+    #[cfg(not(feature = "__rustls"))]
     fn encrypt_chacha20() {
         let secret = [
             0x9a, 0xc3, 0x12, 0xa7, 0xf8, 0x77, 0x46, 0x8e, 0xbe, 0x69, 0x42,

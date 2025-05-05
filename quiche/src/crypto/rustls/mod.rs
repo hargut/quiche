@@ -1,14 +1,35 @@
-use crate::crypto::{make_nonce, Algorithm};
+#[cfg(feature = "rustls-aws-lc-rs")]
+mod aws_lc_rs {
+    pub(super) use aws_lc_rs::aead::Aad;
+    pub(super) use aws_lc_rs::aead::LessSafeKey;
+    pub(super) use aws_lc_rs::aead::Nonce;
+    pub(super) use aws_lc_rs::aead::UnboundKey;
+    pub(super) use aws_lc_rs::aead::AES_128_GCM;
+    pub(super) use aws_lc_rs::aead::AES_256_GCM;
+    pub(super) use aws_lc_rs::aead::CHACHA20_POLY1305;
+    pub(super) use aws_lc_rs::aead::MAX_TAG_LEN;
+}
+#[cfg(feature = "rustls-ring")]
+mod ring {
+    pub(super) use ring::aead::Aad;
+    pub(super) use ring::aead::LessSafeKey;
+    pub(super) use ring::aead::Nonce;
+    pub(super) use ring::aead::UnboundKey;
+    pub(super) use ring::aead::AES_128_GCM;
+    pub(super) use ring::aead::AES_256_GCM;
+    pub(super) use ring::aead::CHACHA20_POLY1305;
+    pub(super) use ring::aead::MAX_TAG_LEN;
+}
+
+#[cfg(feature = "rustls-aws-lc-rs")]
+use crate::crypto::rustls::aws_lc_rs::*;
+#[cfg(feature = "rustls-ring")]
+use crate::crypto::rustls::ring::*;
+
+use crate::crypto::make_nonce;
+use crate::crypto::Algorithm;
 use crate::Error;
 use crate::Result;
-use ring::aead::Aad;
-use ring::aead::LessSafeKey;
-use ring::aead::Nonce;
-use ring::aead::UnboundKey;
-use ring::aead::AES_128_GCM;
-use ring::aead::AES_256_GCM;
-use ring::aead::CHACHA20_POLY1305;
-use ring::aead::MAX_TAG_LEN;
 use rustls::crypto::CryptoProvider;
 use rustls::quic::DirectionalKeys;
 use rustls::quic::HeaderProtectionKey;
@@ -22,10 +43,6 @@ use rustls::Side;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
-
-// TODO: check if rustls re-exports the dependencies
-//#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
-// use aws_lc_rs::aead;
 
 pub struct PacketKey {
     key: LessSafeKey,
@@ -60,10 +77,11 @@ impl PacketKey {
     ) -> Result<usize> {
         if let Some(_extra_in) = extra_in {
             error!("extra_in is not supported when using rustls");
-            return Err(Error::CryptoFail)
+            return Err(Error::CryptoFail);
         };
 
-        let nonce = Nonce::assume_unique_for_key(make_nonce(&self.nonce, counter));
+        let nonce =
+            Nonce::assume_unique_for_key(make_nonce(&self.nonce, counter));
 
         let tag = self
             .key
@@ -189,7 +207,7 @@ impl Seal {
     ) -> Result<usize> {
         if let Some(_extra_in) = extra_in {
             error!("extra_in is not supported when using rustls");
-            return Err(Error::CryptoFail)
+            return Err(Error::CryptoFail);
         }
 
         if (in_len + self.packet_key.tag_len()) > buf.len() {
@@ -378,7 +396,7 @@ pub fn derive_initial_key_material(
 }
 
 fn quic_suite_from_algorithm(algo: Algorithm) -> Result<Suite> {
-    let provider = init_crypto_provider();
+    let provider = crypto_provider();
 
     let cipher_suite = match algo {
         Algorithm::AES128_GCM => CipherSuite::TLS13_AES_128_GCM_SHA256,
@@ -409,16 +427,6 @@ fn quic_suite_from_algorithm(algo: Algorithm) -> Result<Suite> {
     Ok(quic_suite)
 }
 
-pub fn init_crypto_provider() -> &'static Arc<CryptoProvider> {
-    let mut provider = CryptoProvider::get_default();
-    if provider.is_none() {
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        provider = CryptoProvider::get_default();
-    };
-
-    provider.expect("failed to init crypto provider")
-}
-
 pub fn verify_slices_are_equal(a: &[u8], b: &[u8]) -> Result<()> {
     if a.len() != b.len() {
         return Err(Error::CryptoFail);
@@ -427,5 +435,20 @@ pub fn verify_slices_are_equal(a: &[u8], b: &[u8]) -> Result<()> {
     match a == b {
         true => Ok(()),
         false => Err(Error::CryptoFail),
+    }
+}
+
+// early setup is required as the crypto provider is used before ServerConfig /
+// ClientConfig builders which typically set up the crypto providers
+pub fn crypto_provider() -> &'static Arc<CryptoProvider> {
+    if let Some(provider) = CryptoProvider::get_default() {
+        provider
+    } else {
+        #[cfg(feature = "rustls-aws-lc-rs")]
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        #[cfg(feature = "rustls-ring")]
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        CryptoProvider::get_default().unwrap()
     }
 }

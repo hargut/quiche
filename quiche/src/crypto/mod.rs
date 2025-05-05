@@ -1,11 +1,11 @@
-#[cfg(not(feature = "rustls"))]
+#[cfg(not(feature = "__rustls"))]
 mod boringssl_openssl;
-#[cfg(not(feature = "rustls"))]
+#[cfg(not(feature = "__rustls"))]
 pub use boringssl_openssl::*;
 
-#[cfg(feature = "rustls")]
+#[cfg(feature = "__rustls")]
 mod rustls;
-#[cfg(feature = "rustls")]
+#[cfg(feature = "__rustls")]
 pub use rustls::*;
 
 use crate::packet;

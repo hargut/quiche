@@ -1,4 +1,4 @@
-use crate::crypto::init_crypto_provider;
+use crate::crypto::crypto_provider;
 use rustls::client::danger::HandshakeSignatureValid;
 use rustls::client::danger::ServerCertVerified;
 use rustls::client::danger::ServerCertVerifier;
@@ -22,7 +22,7 @@ pub(super) struct DisabledServerCertVerifier {
 
 impl DisabledServerCertVerifier {
     pub(super) fn new() -> crate::Result<Self> {
-        let provider = init_crypto_provider();
+        let provider = crypto_provider();
         Ok(Self {
             supported_algorithms: provider.signature_verification_algorithms,
         })
@@ -80,7 +80,7 @@ pub(super) struct RejectedClientCertAllowedAnonymousVerifier {
 
 impl RejectedClientCertAllowedAnonymousVerifier {
     pub(super) fn new() -> crate::Result<Self> {
-        let provider = init_crypto_provider();
+        let provider = crypto_provider();
         Ok(Self {
             supported_algorithms: provider.signature_verification_algorithms,
             client_auth_mandatory: false,
